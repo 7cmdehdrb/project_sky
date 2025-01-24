@@ -1,5 +1,7 @@
-import open3d as o3d
-from open3d.t.geometry import PointCloud
-from open3d.core import Tensor, Device
+data = {
+    "1": "hello",
+    "2": "world",
+    "3": "bye",
+}
 
-print("Is CUDA supported?:", o3d.core.cuda.is_available())
+print(data[1])

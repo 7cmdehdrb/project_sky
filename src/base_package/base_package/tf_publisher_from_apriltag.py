@@ -24,7 +24,7 @@ import cv2
 import cv_bridge
 import pupil_apriltags as apriltag
 from scipy.spatial.transform import Rotation as R
-from quaternion import QuaternionAngle
+from base_package.base_package.header import QuaternionAngle
 
 
 class AprilDetector(Node):
@@ -302,75 +302,6 @@ class AprilDetector(Node):
 
                 self.tf_publisher.sendTransform(tf_msg)
                 camera.transform_matrix_pub.publish(matrix_msg)
-
-    @staticmethod
-    def transfrom_april_axis_to_ros(data: np.ndarray):
-        """
-        X축: 카메라 이미지의 가로 방향.
-            오른쪽으로 증가.
-        Y축: 카메라 이미지의 세로 방향.
-            아래쪽으로 증가.
-        Z축: 카메라에서 태그까지의 깊이(거리).
-            카메라 렌즈가 바라보는 방향으로 증가.
-
-        ROS
-        X축: 앞으로 나아가는 방향.
-        Y축: 왼쪽으로 이동하는 방향.
-        Z축: 위로 이동하는 방향.
-        """
-
-        return np.array([data[2], -data[0], -data[1]])
-
-    @staticmethod
-    def create_transformation_matrix(translation: np.array, rotation_rpy: np.array):
-        """
-        Translation 벡터와 Roll, Pitch, Yaw로부터 4x4 변환 행렬 생성.
-
-        Args:
-            translation (list or np.ndarray): 길이 3의 Translation 벡터 [x, y, z].
-            rotation_rpy (list or np.ndarray): 길이 3의 Rotation 벡터 [roll, pitch, yaw] (라디안 단위).
-
-        Returns:
-            np.ndarray: 4x4 변환 행렬.
-        """
-        # Translation 벡터
-        x = translation[0]
-        y = translation[1]
-        z = translation[2]
-
-        # Rotation 벡터
-        roll = rotation_rpy[0]
-        pitch = rotation_rpy[1]
-        yaw = rotation_rpy[2]
-
-        # 회전 행렬 생성 (ZYX 순서)
-        Rz = np.array(
-            [[np.cos(yaw), -np.sin(yaw), 0], [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]]
-        )
-        Ry = np.array(
-            [
-                [np.cos(pitch), 0, np.sin(pitch)],
-                [0, 1, 0],
-                [-np.sin(pitch), 0, np.cos(pitch)],
-            ]
-        )
-        Rx = np.array(
-            [
-                [1, 0, 0],
-                [0, np.cos(roll), -np.sin(roll)],
-                [0, np.sin(roll), np.cos(roll)],
-            ]
-        )
-
-        # 최종 회전 행렬 (R = Rz * Ry * Rx)
-        rotation_matrix = Rz @ Ry @ Rx
-
-        # 4x4 변환 행렬 생성
-        transformation_matrix = np.eye(4)
-        transformation_matrix[:3, :3] = rotation_matrix
-        transformation_matrix[:3, 3] = [x, y, z]
-
-        return transformation_matrix
 
 
 def main():

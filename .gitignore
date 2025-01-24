@@ -276,3 +276,5 @@ COLCON_IGNORE
 AMENT_IGNORE
 
 # End of https://www.toptal.com/developers/gitignore/api/ros,ros2,python,c++
+
+*.ply

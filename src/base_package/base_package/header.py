@@ -1,183 +1,165 @@
-# ROS2
-import rclpy
-from rclpy.node import Node
-from rclpy.time import Time
-from rclpy.duration import Duration
-from rclpy.qos import QoSProfile, qos_profile_system_default
-
-# Message
+import numpy as np
+import sensor_msgs_py.point_cloud2 as pc2
+from scipy.spatial.transform import Rotation as R
 from std_msgs.msg import *
 from geometry_msgs.msg import *
 from sensor_msgs.msg import *
 from nav_msgs.msg import *
 from visualization_msgs.msg import *
 
-# TF
-from tf2_ros import *
 
-# Python
-from struct import pack
-import numpy as np
-import sensor_msgs_py.point_cloud2 as pc2
-import open3d as o3d
+class QuaternionAngle:
+    @staticmethod
+    def euler_from_quaternion(quaternion):
+        """
+        In: [x, y, z, w], Out: roll, pitch, yaw
+        """
+        x = quaternion[0]
+        y = quaternion[1]
+        z = quaternion[2]
+        w = quaternion[3]
 
+        sinr_cosp = 2 * (w * x + y * z)
+        cosr_cosp = 1 - 2 * (x * x + y * y)
+        roll = np.arctan2(sinr_cosp, cosr_cosp)
 
-class PCDSubscriber(Node):
-    class PointCloudSubscriber:
-        def __init__(self, node: Node, camera_id: str):
-            self.node = node
+        sinp = 2 * (w * y - z * x)
+        pitch = np.arcsin(sinp)
 
-            self.camera_id = camera_id
-            self.pointcloud_topic = f"/camera/{camera_id}/depth/color/points"
+        siny_cosp = 2 * (w * z + x * y)
+        cosy_cosp = 1 - 2 * (y * y + z * z)
+        yaw = np.arctan2(siny_cosp, cosy_cosp)
 
-            self.pointcloud_sub = self.node.create_subscription(
-                PointCloud2,
-                self.pointcloud_topic,
-                self.callback,
-                qos_profile_system_default,
-            )
+        return roll, pitch, yaw
 
-            self.transform_matrix_sub = self.node.create_subscription(
-                Float32MultiArray,
-                f"{self.camera_id}_transform_matrix",
-                self.transform_matrix_callback,
-                qos_profile_system_default,
-            )
+    @staticmethod
+    def quaternion_from_euler(roll, pitch, yaw):
+        """
+        In: roll, pitch, yaw, Out: x, y, z, w
+        """
+        qx = np.sin(roll / 2) * np.cos(pitch / 2) * np.cos(yaw / 2) - np.cos(
+            roll / 2
+        ) * np.sin(pitch / 2) * np.sin(yaw / 2)
+        qy = np.cos(roll / 2) * np.sin(pitch / 2) * np.cos(yaw / 2) + np.sin(
+            roll / 2
+        ) * np.cos(pitch / 2) * np.sin(yaw / 2)
+        qz = np.cos(roll / 2) * np.cos(pitch / 2) * np.sin(yaw / 2) - np.sin(
+            roll / 2
+        ) * np.sin(pitch / 2) * np.cos(yaw / 2)
+        qw = np.cos(roll / 2) * np.cos(pitch / 2) * np.cos(yaw / 2) + np.sin(
+            roll / 2
+        ) * np.sin(pitch / 2) * np.sin(yaw / 2)
 
-            self.msg = PointCloud2()
-            self.transform_matrix = np.eye(4)
+        return qx, qy, qz, qw
 
-        def callback(self, msg: PointCloud2):
-            self.msg = msg
+    @staticmethod
+    def euler_from_rotation_matrix(rotation_matrix):
+        """
+        In: rotation_matrix, Out: roll, pitch, yaw
+        """
+        # 회전 행렬을 scipy의 Rotation 객체로 변환
+        rotation = R.from_matrix(rotation_matrix)
 
-        def transform_matrix_callback(self, msg: Float32MultiArray):
-            data = msg.data
+        # Roll, Pitch, Yaw 추출 (XYZ 순서)
+        roll, pitch, yaw = rotation.as_euler("xyz", degrees=False)
 
-            # Float32MultiArray 데이터를 4x4 NumPy 배열로 변환
-            transform_matrix = np.array(data).reshape(4, 4)
+        return roll, pitch, yaw
 
-            axis_rotate_matrix = np.array(
-                [
-                    [0, 0, 1, 0],  # Z -> X
-                    [-1, 0, 0, 0],  # X -> -Y
-                    [0, -1, 0, 0],  # Y -> -Z
-                    [0, 0, 0, 1],  # Homogeneous coordinate
-                ]
-            )
+    @staticmethod
+    def rotation_matrix_from_euler(roll, pitch, yaw):
+        """
+        In: roll, pitch, yaw, Out: rotation_matrix
+        """
+        rotation = R.from_euler("xyz", [roll, pitch, yaw], degrees=False)
+        return rotation.as_matrix()
 
-            self.transform_matrix = transform_matrix @ axis_rotate_matrix
+    @staticmethod
+    def create_transform_matrix(translation, rotation):
+        """
+        In: translation, rotation, Out: transform_matrix
+        """
+        transform_matrix = np.eye(4)
+        transform_matrix[:3, :3] = rotation
+        transform_matrix[:3, 3] = translation
+        return transform_matrix
 
-    def __init__(self):
-        super().__init__("pcd_subscriber_node")
+    @staticmethod
+    def transform_realsense_to_ros(transform_matrix: np.array) -> np.array:
+        """
+        Realsense 좌표계를 ROS 좌표계로 변환합니다.
 
-        self.pcd = o3d.geometry.PointCloud()
+        Realsense 좌표계:
+            X축: 이미지의 가로 방향 (오른쪽으로 증가).
+            Y축: 이미지의 세로 방향 (아래쪽으로 증가).
+            Z축: 카메라 렌즈가 바라보는 방향 (깊이 방향).
 
-        self.get_logger().info("Waiting for 1 second before starting...")
-        self.get_clock().sleep_for(Duration(seconds=1))
+        ROS 좌표계:
+            X축: 앞으로 나아가는 방향.
+            Y축: 왼쪽으로 이동하는 방향.
+            Z축: 위로 이동하는 방향.
 
-        self.camera1 = self.PointCloudSubscriber(self, "camera1")
-        self.camera2 = self.PointCloudSubscriber(self, "camera2")
-        self.camera3 = self.PointCloudSubscriber(self, "camera3")
-        # self.camera4 = self.PointCloudSubscriber(self, "camera4")
+        Args:
+            transform_matrix (np.ndarray): 4x4 변환 행렬.
 
-        self.cameras = [
-            self.camera1,
-            self.camera2,
-            self.camera3,
-            # self.camera4,
-            # None
-        ]
+        Returns:
+            np.ndarray: 변환된 4x4 변환 행렬 (ROS 좌표계 기준).
+        """
+        if transform_matrix.shape != (4, 4):
+            raise ValueError("Input transformation matrix must be a 4x4 matrix.")
 
-        self.pointcloud_publisher = self.create_publisher(
-            PointCloud2, "/combined_pointcloud", qos_profile_system_default
+        # Realsense에서 ROS로 좌표계를 변환하는 회전 행렬
+        realsense_to_ros_rotation = np.array(
+            [[0, 0, 1], [-1, 0, 0], [0, -1, 0]]  # X -> Z  # Y -> -X  # Z -> -Y
         )
 
-        hz = 10
-        self.loop = self.create_timer(float(1 / hz), self.publish_pointcloud)
+        # 변환 행렬의 분해
+        rotation = transform_matrix[:3, :3]  # 3x3 회전 행렬
+        translation = transform_matrix[:3, 3]  # 3x1 평행 이동 벡터
 
-        self.current_time = self.get_clock().now()
+        # 좌표계 변환
+        rotation_ros = realsense_to_ros_rotation @ rotation
+        translation_ros = realsense_to_ros_rotation @ translation
 
-    def publish_pointcloud(self):
-        msg = self.post_process_pointcloud()
+        # 새로운 변환 행렬 구성
+        transform_matrix_ros = np.eye(4)
+        transform_matrix_ros[:3, :3] = rotation_ros
+        transform_matrix_ros[:3, 3] = translation_ros
 
-        if msg is not None:
-            self.pointcloud_publisher.publish(msg)
+        return transform_matrix_ros
 
-    def post_process_pointcloud(self):
-        # Calculate the time difference between the current and previous callback
+    @staticmethod
+    def invert_transformation(matrix):
+        """
+        Inverts a 4x4 transformation matrix.
 
-        current_time = self.get_clock().now()
-        dt = (current_time - self.current_time).nanoseconds / 1e9
+        Parameters:
+            matrix (np.ndarray): A 4x4 transformation matrix representing A > B.
 
-        print(f"dt: {dt}, hz: {1/dt}")
+        Returns:
+            np.ndarray: The inverted transformation matrix representing B > A.
+        """
+        if matrix.shape != (4, 4):
+            raise ValueError("Input matrix must be a 4x4 matrix.")
 
-        self.current_time = current_time
+        # Extract rotation and translation components
+        rotation = matrix[:3, :3]
+        translation = matrix[:3, 3]
 
-        rgb = True
+        # Invert the rotation (transpose for orthogonal matrix)
+        rotation_inv = rotation.T
 
-        combined_points = np.empty((0, 6)) if rgb else np.empty((0, 3))
+        # Invert the translation
+        translation_inv = -np.dot(rotation_inv, translation)
 
-        for camera in self.cameras:
-            camera: PCDSubscriber.PointCloudSubscriber
+        # Construct the inverted transformation matrix
+        inverted_matrix = np.eye(4)
+        inverted_matrix[:3, :3] = rotation_inv
+        inverted_matrix[:3, 3] = translation_inv
 
-            if len(camera.msg.data) == 0:
-                self.get_logger().warn(f"Empty point cloud from {camera.camera_id}")
-                continue
+        return inverted_matrix
 
-            camera_points = self.pointcloud2_to_numpy(camera.msg, rgb=rgb)
 
-            # Outlier removal. Realsense Axis
-            camera_points = self.ROI_Color_filter(
-                points=camera_points,
-                ROI=True,
-                x_range=(-3.0, 3.0),  # y
-                y_range=(-3.0, 3.0),  # z
-                z_range=(-0.1, 3.0),  # x
-                rgb=False if rgb else False,
-            )[::2]
-
-            camera_transform_matrix = camera.transform_matrix
-
-            transformed_camera1_points = self.transform_pointcloud(
-                points=camera_points, transform_matrix=camera_transform_matrix
-            )
-
-            combined_points = np.concatenate(
-                [
-                    combined_points,
-                    transformed_camera1_points,
-                ],
-                axis=0,
-            )
-
-        # Ros Axis
-        ROI_filtered_points = self.ROI_Color_filter(
-            points=combined_points,
-            ROI=False,  # ROI Filter
-            x_range=(-2.0, 2.0),
-            y_range=(-2.0, 2.0),
-            z_range=(-2.0, 2.0),
-            rgb=False if rgb else False,  # Filter only Red
-            r_range=(150, 255),
-            g_range=(0, 100),
-            b_range=(0, 100),
-        )
-
-        try:
-
-            filtered_msg = self.numpy_to_pointcloud2(
-                ROI_filtered_points,
-                frame_id="base_link",
-                stamp=self.get_clock().now().to_msg(),
-                rgb=rgb,
-            )
-
-        except Exception as e:
-            self.get_logger().error(f"Exception: {e}")
-            return None
-
-        return filtered_msg
-
+class PointCloudTransformer:
     @staticmethod
     def numpy_to_pointcloud2(points: np.array, frame_id, stamp, rgb=True):
         # Create the header
@@ -390,18 +372,3 @@ class PCDSubscriber(Node):
         filtered_points = points[unique_indices]
 
         return filtered_points
-
-
-def main():
-    rclpy.init(args=None)
-
-    node = PCDSubscriber()
-
-    rclpy.spin(node)
-
-    node.destroy_node()
-    rclpy.shutdown()
-
-
-if __name__ == "__main__":
-    main()
