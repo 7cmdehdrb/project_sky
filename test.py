@@ -1,7 +1,3 @@
-data = {
-    "1": "hello",
-    "2": "world",
-    "3": "bye",
-}
+a = "A"
 
-print(data[1])
+print(ord(a))

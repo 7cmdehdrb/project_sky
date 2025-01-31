@@ -26,13 +26,56 @@ from open3d.core import Tensor, Device  # type: ignore
 from header import QuaternionAngle, PointCloudTransformer
 
 
+# Temperal Function
+def get_marker(transform_matrix, time):
+    position_matrix = transform_matrix[:3, 3]
+    rotation_matrix = transform_matrix[:3, :3]
+
+    point = Point(x=position_matrix[0], y=position_matrix[1], z=position_matrix[2])
+
+    r, p, y = QuaternionAngle.euler_from_rotation_matrix(rotation_matrix)
+    quat = QuaternionAngle.quaternion_from_euler(r, p, y)
+
+    orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+
+    return Marker(
+        header=Header(
+            frame_id="camera1_link",
+            stamp=time,
+        ),
+        type=Marker.CUBE,
+        action=Marker.ADD,
+        id=999,
+        pose=Pose(
+            position=point,
+            orientation=orientation,
+        ),
+        scale=Vector3(x=0.1, y=0.1, z=0.15),
+        color=ColorRGBA(r=1.0, g=0.0, b=0.0, a=1.0),
+    )
+
+
 class ScanMatchingNode(Node):
     def __init__(self):
         super().__init__("scan_matching_node")
 
-        pcd_file_path = "/home/min/7cmdehdrb/ros2_ws/src/base_package/base_package/resource/coca_cola_transformed1.ply"
-        points = o3d.io.read_point_cloud(pcd_file_path)
-        self.source_points = np.asarray(points.points)
+        pcd_file_path = "/home/min/7cmdehdrb/ros2_ws/src/base_package/base_package/resource/coca_cola.ply"
+
+        # Resize matrix. mm -> m
+        self.resize_matrix = np.array(
+            [
+                [0.001, 0.0, 0.0, 0.0],
+                [0.0, 0.001, 0.0, 0.0],
+                [0.0, 0.0, 0.001, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+        )
+
+        points = np.asarray(o3d.io.read_point_cloud(pcd_file_path).points)
+        resized_points = PointCloudTransformer.transform_pointcloud(
+            points, self.resize_matrix
+        )
+        self.source_points = resized_points
 
         self.subscription = self.create_subscription(
             PointCloud2,
@@ -59,8 +102,13 @@ class ScanMatchingNode(Node):
             qos_profile_system_default,
         )
 
+        self.test_pub = self.create_publisher(
+            Marker,
+            f"/scan_matching/test",
+            qos_profile_system_default,
+        )
+
         self.points = np.empty((0, 3))
-        self.stacked_transform_matrix = np.eye(4)
         self.transform_matrix = np.array(
             [
                 [0.9884218, -0.15123641, 0.01224336, 0.46542],
@@ -69,9 +117,11 @@ class ScanMatchingNode(Node):
                 [0.0, 0.0, 0.0, 1.0],
             ]
         )
+        self.stacked_transform_matrix = self.transform_matrix
 
         # ICP parameters
-        self.threshold = 0.05
+        self.min_threshold = 0.01
+        self.threshold = 0.1
         self.scan_matching = (
             o3d.t.pipelines.registration.TransformationEstimationPointToPoint()
         )
@@ -96,9 +146,9 @@ class ScanMatchingNode(Node):
 
         self.points = PointCloudTransformer.ROI_Color_filter(
             points,
-            x_range=(0.2, 0.8),
-            y_range=(-0.15, 0.15),
-            z_range=(-0.3, -0.0),
+            x_range=(0.6, 0.8),
+            y_range=(-0.05, 0.15),
+            z_range=(-0.3, 0.3),
             rgb=False,
         )
 
@@ -155,6 +205,9 @@ class ScanMatchingNode(Node):
         )
 
         self.transform_matrix = result.transformation.cpu().numpy()
+        self.stacked_transform_matrix = (
+            self.stacked_transform_matrix @ self.transform_matrix
+        )
 
         if np.allclose(self.transform_matrix, np.eye(4)):
             self.threshold += 0.01
@@ -167,11 +220,11 @@ class ScanMatchingNode(Node):
             self.threshold -= 0.01
 
         # Clamp the rotation matrix
-        self.threshold = np.clip(self.threshold, 0.05, 0.1)
+        self.threshold = np.clip(self.threshold, self.min_threshold, 0.2)
 
-        self.stacked_transform_matrix = (
-            self.stacked_transform_matrix @ self.transform_matrix
-        )
+        # self.stacked_transform_matrix = (
+        #     self.stacked_transform_matrix @ self.transform_matrix
+        # )
 
         # print(f"Transform Matrix: {self.transform_matrix}")
         translation = self.stacked_transform_matrix[:3, 3]
@@ -199,6 +252,9 @@ class ScanMatchingNode(Node):
         )
 
         self.transformed_points_pub.publish(transformed_points_msg)
+        self.test_pub.publish(
+            get_marker(self.stacked_transform_matrix, self.get_clock().now().to_msg())
+        )
 
     @staticmethod
     def perform_icp(
