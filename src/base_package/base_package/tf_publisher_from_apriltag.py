@@ -23,8 +23,7 @@ import numpy as np
 import cv2
 import cv_bridge
 import pupil_apriltags as apriltag
-from scipy.spatial.transform import Rotation as R
-from base_package.base_package.header import QuaternionAngle
+from header import QuaternionAngle
 
 
 class AprilDetector(Node):
@@ -144,13 +143,13 @@ class AprilDetector(Node):
         self.camera1 = self.ImageSubscriber(self, "camera1", self.update_tf)
         self.camera2 = self.ImageSubscriber(self, "camera2", self.update_tf)
         self.camera3 = self.ImageSubscriber(self, "camera3", self.update_tf)
-        self.camera4 = self.ImageSubscriber(self, "camera4", self.update_tf)
+        # self.camera4 = self.ImageSubscriber(self, "camera4", self.update_tf)
 
         self.cameras = [
             self.camera1,
             self.camera2,
             self.camera3,
-            self.camera4,
+            # self.camera4,
         ]
 
         # TF
@@ -200,7 +199,7 @@ class AprilDetector(Node):
         self, image: Image, camera_info: CameraInfo, imu_orientation: Vector3
     ):
         """Function to detect the AprilTag which has the specified tag_id and return the transform object(TF) and transform matrix."""
-        weight = 0.0
+        weight = 0.7
 
         if camera_info is None:
             self.get_logger().error("Camera info is not available.")
@@ -231,6 +230,7 @@ class AprilDetector(Node):
 
             # Check if the detected tag is the one we are looking for
             if tag_id != self.tag_id:
+                self.get_logger().warn(f"Tag ID: {tag_id}")
                 continue
 
             # Translation: Cam -> Tag
@@ -307,7 +307,7 @@ class AprilDetector(Node):
 def main():
     rclpy.init(args=None)
 
-    node = AprilDetector(tag_size=0.04, tag_id=0)
+    node = AprilDetector(tag_size=0.038, tag_id=122)
 
     rclpy.spin(node)
 

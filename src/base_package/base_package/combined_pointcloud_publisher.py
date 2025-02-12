@@ -17,7 +17,7 @@ from tf2_ros import *
 
 # Python
 import numpy as np
-from base_package.base_package.header import QuaternionAngle, PointCloudTransformer
+from header import QuaternionAngle, PointCloudTransformer
 
 
 class PCDSubscriber(Node):
@@ -86,7 +86,7 @@ class PCDSubscriber(Node):
             PointCloud2, "/combined_pointcloud", qos_profile_system_default
         )
 
-        hz = 10
+        hz = 30
         self.loop = self.create_timer(float(1 / hz), self.publish_pointcloud)
 
         self.current_time = self.get_clock().now()

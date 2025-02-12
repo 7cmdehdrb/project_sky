@@ -1,10 +1,12 @@
-ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" color_width:=640 color_height:=480 pointcloud.enable:=true enable_gyro:=true enable_accel:=true usb_port_id:="2-10.1"
-ros2 launch realsense2_camera rs_launch.py camera_name:="camera2" color_width:=640 color_height:=480 pointcloud.enable:=true enable_gyro:=true enable_accel:=true usb_port_id:="2-10.2"
-ros2 launch realsense2_camera rs_launch.py camera_name:="camera3" color_width:=640 color_height:=480 pointcloud.enable:=true enable_gyro:=true enable_accel:=true usb_port_id:="2-10.3"
-ros2 launch realsense2_camera rs_launch.py camera_name:="camera4" color_width:=640 color_height:=480 pointcloud.enable:=true enable_gyro:=true enable_accel:=true usb_port_id:="2-10.4"
-"serial_no:=243122300923"
+ros2 launch realsense2_camera rs_launch.py camera_name:="camera1"  pointcloud.enable:=true enable_gyro:=true enable_accel:=true usb_port_id:="4-2.1.4" # right
+ros2 launch realsense2_camera rs_launch.py camera_name:="camera2"  pointcloud.enable:=true enable_gyro:=true enable_accel:=true usb_port_id:="4-2.1.3" # left
+ros2 launch realsense2_camera rs_launch.py camera_name:="camera3"  pointcloud.enable:=true enable_gyro:=true enable_accel:=true usb_port_id:="4-2.1.2" # center
 
+rgb_camera.color_profile:=640x480x30 depth_module.depth_profile:=640x480x30
+rgb_camera.color_profile:=640x480x30 depth_module.depth_profile:=640x480x30
+rgb_camera.color_profile:=640x480x30 depth_module.depth_profile:=640x480x30
 
-/sys/devices/pci0000:00/0000:00:14.0/usb2/2-10/2-10.1/2-10.1:1.0/video4linux/video0
-
-/sys/devices/pci0000:00/0000:00:14.0/usb2/2-10/2-10.4/2-10.4:1.0/video4linux/video18
+4-2.1.2
+4-2.1.3
+4-2.1.4
+053422250869
