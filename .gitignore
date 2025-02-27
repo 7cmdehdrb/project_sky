@@ -279,4 +279,12 @@ AMENT_IGNORE
 
 *.ply
 *.zip
+<<<<<<< HEAD
 *.db3
+=======
+*.pt
+
+/src/object_tracker/resource/dataset
+/yolo
+/dataset
+>>>>>>> cf4df6c (add real-time segmentation and tracking, remove unused files)

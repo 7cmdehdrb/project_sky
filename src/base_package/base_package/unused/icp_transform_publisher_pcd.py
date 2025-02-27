@@ -26,17 +26,69 @@ from open3d.core import Tensor, Device  # type: ignore
 from header import QuaternionAngle, PointCloudTransformer
 
 
-# Temperal Function
-def get_marker(transform_matrix, time):
+class LowPassFilter:
+    def __init__(self, cutoff_freq, ts):
+        self.ts = ts
+        self.cutoff_freq = cutoff_freq
+        self.pre_out = 0.0
+        self.tau = self.calc_filter_coef()
+
+    def calc_filter_coef(self):
+        w_cut = 2 * np.pi * self.cutoff_freq
+        return 1 / w_cut
+
+    def filter(self, data):
+        out = (self.tau * self.pre_out + self.ts * data) / (self.tau + self.ts)
+        self.pre_out = out
+        return out
+
+
+def get_pose_stamped(transform_matrix, time):
     position_matrix = transform_matrix[:3, 3]
     rotation_matrix = transform_matrix[:3, :3]
 
-    point = Point(x=position_matrix[0], y=position_matrix[1], z=position_matrix[2])
+    x = position_matrix[0]
+    y = position_matrix[1]
+    z = position_matrix[2]
 
     r, p, y = QuaternionAngle.euler_from_rotation_matrix(rotation_matrix)
     quat = QuaternionAngle.quaternion_from_euler(r, p, y)
 
-    orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
+
+    return PoseStamped(
+        header=Header(
+            frame_id="camera1_link",
+            stamp=time,
+        ),
+        pose=Pose(
+            position=Point(x=x, y=y, z=z),
+            orientation=orientation,
+        ),
+    )
+
+
+# Temperal Function
+def get_marker(transform_matrix, time, lpfs: list):
+    position_matrix = transform_matrix[:3, 3]
+    rotation_matrix = transform_matrix[:3, :3]
+
+    x = lpfs[0].filter(position_matrix[0])
+    y = lpfs[1].filter(position_matrix[1])
+    z = lpfs[2].filter(position_matrix[2])
+
+    point = Point(x=x, y=y, z=z)
+
+    r, p, y = QuaternionAngle.euler_from_rotation_matrix(rotation_matrix)
+
+    r = lpfs[3].filter(r)
+    p = lpfs[4].filter(p)
+    y = lpfs[5].filter(y)
+
+    quat = QuaternionAngle.quaternion_from_euler(r, p, y)
+
+    # orientation = Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)
+    orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
 
     return Marker(
         header=Header(
@@ -50,8 +102,8 @@ def get_marker(transform_matrix, time):
             position=point,
             orientation=orientation,
         ),
-        scale=Vector3(x=0.1, y=0.1, z=0.15),
-        color=ColorRGBA(r=1.0, g=0.0, b=0.0, a=1.0),
+        scale=Vector3(x=0.1, y=0.1, z=0.2),
+        color=ColorRGBA(r=0.0, g=1.0, b=0.0, a=0.5),
     )
 
 
@@ -59,7 +111,7 @@ class ScanMatchingNode(Node):
     def __init__(self):
         super().__init__("scan_matching_node")
 
-        pcd_file_path = "/home/min/7cmdehdrb/ros2_ws/src/base_package/base_package/resource/coca_cola.ply"
+        pcd_file_path = "/home/min/7cmdehdrb/ros2_ws/coca_cola_transformed.ply"
 
         # Resize matrix. mm -> m
         self.resize_matrix = np.array(
@@ -75,7 +127,7 @@ class ScanMatchingNode(Node):
         resized_points = PointCloudTransformer.transform_pointcloud(
             points, self.resize_matrix
         )
-        self.source_points = resized_points
+        self.source_points = resized_points[::5]
 
         self.subscription = self.create_subscription(
             PointCloud2,
@@ -108,31 +160,42 @@ class ScanMatchingNode(Node):
             qos_profile_system_default,
         )
 
-        self.points = np.empty((0, 3))
-        self.transform_matrix = np.array(
-            [
-                [0.9884218, -0.15123641, 0.01224336, 0.46542],
-                [-0.14964462, -0.98498638, -0.08607164, -0.07322],
-                [0.02507671, 0.08324294, -0.99621372, -0.08343],
-                [0.0, 0.0, 0.0, 1.0],
-            ]
+        self.test_pub2 = self.create_publisher(
+            PoseStamped,
+            f"/scan_matching/test2",
+            qos_profile_system_default,
         )
-        self.stacked_transform_matrix = self.transform_matrix
+
+        self.points = np.empty((0, 3))
+
+        # self.transform_matrix = np.array(
+        #     [
+        #         [1.0, 0.0, 0.0, 0.7],
+        #         [0.0, 1.0, 0.0, -0.1],
+        #         [0.0, 0.0, 1.0, -0.2],
+        #         [0.0, 0.0, 0.0, 1.0],
+        #     ]
+        # )
+
+        self.transform_matrix = np.eye(4)
+        self.stacked_transform_matrix = np.eye(4)
+
+        self.lpfs = [LowPassFilter(ts=0.1, cutoff_freq=0.1) for _ in range(6)]
 
         # ICP parameters
-        self.min_threshold = 0.01
+        self.min_threshold = 0.03
         self.threshold = 0.1
         self.scan_matching = (
             o3d.t.pipelines.registration.TransformationEstimationPointToPoint()
         )
         self.criteria = o3d.t.pipelines.registration.ICPConvergenceCriteria(
-            max_iteration=100,  # 최대 반복 횟수
+            max_iteration=200,  # 최대 반복 횟수
             relative_fitness=1e-6,  # Fitness 변화 임계값
             relative_rmse=1e-6,  # RMSE 변화 임계값
         )
 
         # Main loop
-        hz = 30
+        hz = 10
         self.timer = self.create_timer(float(1 / hz), self.try_scan_matching)
         self.current_time = self.get_clock().now()
 
@@ -146,9 +209,10 @@ class ScanMatchingNode(Node):
 
         self.points = PointCloudTransformer.ROI_Color_filter(
             points,
-            x_range=(0.6, 0.8),
-            y_range=(-0.05, 0.15),
-            z_range=(-0.3, 0.3),
+            ROI=True,
+            x_range=(0.5, 1.0),
+            y_range=(0.0, 0.5),
+            z_range=(-0.5, 0.0),
             rgb=False,
         )
 
@@ -172,7 +236,7 @@ class ScanMatchingNode(Node):
                 "source_points: %d, points: %d"
                 % (self.source_points.shape[0], self.points.shape[0])
             )
-            time.sleep(1)
+            # time.sleep(1)
             return None
 
         self.get_logger().info(
@@ -205,8 +269,8 @@ class ScanMatchingNode(Node):
         )
 
         self.transform_matrix = result.transformation.cpu().numpy()
-        self.stacked_transform_matrix = (
-            self.stacked_transform_matrix @ self.transform_matrix
+        self.stacked_transform_matrix = np.dot(
+            self.stacked_transform_matrix, self.transform_matrix
         )
 
         if np.allclose(self.transform_matrix, np.eye(4)):
@@ -221,10 +285,6 @@ class ScanMatchingNode(Node):
 
         # Clamp the rotation matrix
         self.threshold = np.clip(self.threshold, self.min_threshold, 0.2)
-
-        # self.stacked_transform_matrix = (
-        #     self.stacked_transform_matrix @ self.transform_matrix
-        # )
 
         # print(f"Transform Matrix: {self.transform_matrix}")
         translation = self.stacked_transform_matrix[:3, 3]
@@ -253,7 +313,16 @@ class ScanMatchingNode(Node):
 
         self.transformed_points_pub.publish(transformed_points_msg)
         self.test_pub.publish(
-            get_marker(self.stacked_transform_matrix, self.get_clock().now().to_msg())
+            get_marker(
+                self.stacked_transform_matrix,
+                self.get_clock().now().to_msg(),
+                self.lpfs,
+            )
+        )
+        self.test_pub2.publish(
+            get_pose_stamped(
+                self.stacked_transform_matrix, self.get_clock().now().to_msg()
+            )
         )
 
     @staticmethod
