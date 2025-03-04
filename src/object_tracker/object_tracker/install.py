@@ -1,7 +1,7 @@
 import os
 import requests
 
-install_path = os.path.join(os.path.dirname(__file__), "resource")
+install_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resource")
 
 # 설정값
 server_url = "http://7cmdehdrb.iptime.org:13670/share/KmT_m-fo"

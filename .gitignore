@@ -277,14 +277,19 @@ AMENT_IGNORE
 
 # End of https://www.toptal.com/developers/gitignore/api/ros,ros2,python,c++
 
+# Ignore all png, pth, pt files
 *.ply
 *.zip
-<<<<<<< HEAD
 *.db3
-=======
+*.png
+*.pth
 *.pt
 
+# Ignore files larger than 50MB
+*.[5-9][0-9]M
+*.1[0-9][0-9]M
+*.2[0-4][0-9]M
+*.25[0-5]M
+
 /src/object_tracker/resource/dataset
-/yolo
-/dataset
->>>>>>> cf4df6c (add real-time segmentation and tracking, remove unused files)
+/third_party/yolo

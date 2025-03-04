@@ -1,17 +1,13 @@
 {
-<<<<<<< HEAD
     "python.autoComplete.extraPaths": [
         "/opt/ros/humble/lib/python3.10/site-packages",
-        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+        "/opt/ros/humble/local/lib/python3.10/dist-packages",
+        "/home/min/7cmdehdrb/ros2_ws/install/custom_msgs/local/lib/python3.10/dist-packages"
     ],
     "python.analysis.extraPaths": [
         "/opt/ros/humble/lib/python3.10/site-packages",
-        "/opt/ros/humble/local/lib/python3.10/dist-packages"
-    ]
-}
-=======
-    "python.analysis.extraPaths": [
+        "/opt/ros/humble/local/lib/python3.10/dist-packages",
         "/home/min/7cmdehdrb/ros2_ws/install/custom_msgs/local/lib/python3.10/dist-packages"
     ]
 }
->>>>>>> cf4df6c (add real-time segmentation and tracking, remove unused files)
+

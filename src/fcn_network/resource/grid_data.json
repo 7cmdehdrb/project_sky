@@ -1,0 +1,17 @@
+{
+    "rows": ["A", "B", "C"],
+    "columns": [1, 2, 3, 4],
+    "grid_identifier": {
+        "grid_size": {
+            "x": 0.13,
+            "y": 0.20,
+            "z": 0.33
+        },
+        "start_center_coord": {
+            "x": 0.75,
+            "y": 0.20,
+            "z": 0.33
+        },
+        "point_threshold": 100
+    }
+}

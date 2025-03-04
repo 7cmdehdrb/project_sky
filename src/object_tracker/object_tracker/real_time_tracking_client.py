@@ -42,10 +42,18 @@ class MegaPoseClient:
     class ServerMessage:
         GET_POSE = "GETP"
         RET_POSE = "RETP"
+        GET_VIZ = "GETV"
+        RET_VIZ = "RETV"
+        SET_INTR = "INTR"
+        GET_SCORE = "GSCO"
+        RET_SCORE = "RSCO"
+        SET_SO3_GRID_SIZE = "SO3G"
+        GET_LIST_OBJECTS = "GLSO"
+        RET_LIST_OBJECTS = "RLSO"
         ERR = "RERR"
         OK = "OKOK"
 
-    def __init__(self, node: Node, labels: list):
+    def __init__(self, node: Node):
         self.SERVER_HOST = "127.0.0.1"
         self.SERVER_PORT = 5555
         self.SERVER_OPERATION_CODE_LENGTH = 4
@@ -70,15 +78,22 @@ class MegaPoseClient:
 
         self.initial_data = {
             "detections": [[260.0, 110.0, 350.0, 343.0]],
-            "labels": labels,
+            "labels": ["smoothie"],
             "use_depth": False,
         }
         self.loop_data = {
             "initial_cTos": None,
-            "labels": labels,
+            "labels": ["smoothie"],
             "refiner_iterations": 1,
             "use_depth": False,
         }
+
+        # Run Once
+        while True:
+            response = self.send_list_objects_request(self.socket)
+            if response is not None:
+                print("Object list:", response)
+                break
 
     def set_intrinsics(self, K: np.ndarray, image_size: tuple):
         if not self.is_configured:
@@ -249,12 +264,39 @@ class MegaPoseClient:
 
         return False
 
+    def send_list_objects_request(self, sock: socket.socket):
+        """
+        서버에 오브젝트 목록을 요청하고 응답을 받는다.
+
+        :param sock: 열린 소켓 객체
+        :return: 오브젝트 목록 (list of str) 또는 None
+        """
+        # 서버에 'GLSO' 요청 전송
+        self.send_message(sock, "GLSO", b"")
+
+        # 응답 수신
+        code, response_buffer = self.receive_message(sock)
+
+        if code == MegaPoseClient.ServerMessage.RET_LIST_OBJECTS:
+            json_str = self.read_string(response_buffer)
+            object_list = json.loads(json_str)
+            return object_list
+
+        elif code == MegaPoseClient.ServerMessage.ERR:
+            self.node.get_logger().warn(
+                f"Error from server: {self.read_string(response_buffer)}"
+            )
+        else:
+            self.node.get_logger().warn(f"Unknown response code: {code}")
+
+        return None
+
 
 class RealTimeTrackingClientNode(Node):
     def __init__(self):
         super().__init__("real_time_tracking_client_node")
 
-        self.megapose_client = MegaPoseClient(node=self, labels=["smoothie"])
+        self.megapose_client = MegaPoseClient(node=self)
         self.bridge = CvBridge()
 
         self.do_publish_image = True
@@ -331,7 +373,7 @@ class RealTimeTrackingClientNode(Node):
     def run(self):
         # while True:
         if self.frame is None:
-            self.get_logger().info("Frame does not exist.")
+            self.get_logger().warn("Frame does not exist.")
             return None
 
         pose_msg, bbox = self.megapose_client.run(frame=self.frame)

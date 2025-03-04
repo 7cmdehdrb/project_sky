@@ -1,7 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = "object_tracker"
-
+package_name = "fcn_network"
 
 setup(
     name=package_name,
@@ -17,7 +16,7 @@ setup(
     maintainer_email="7cmdehdrb@naver.com",
     description="TODO: Package description",
     license="TODO: License declaration",
-    # tests_require=["pytest"],
+    # tests_require=['pytest'],
     entry_points={
         "console_scripts": [],
     },
