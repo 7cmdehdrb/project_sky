@@ -105,9 +105,21 @@ class FCNServerNode(Node):
             self.image_callback,
             qos_profile=qos_profile_system_default,
         )
+        self.temp_col_subscription = self.create_subscription(
+            UInt16,
+            self.get_name() + "/moving_col",
+            self.temp_col_callback,
+            qos_profile=qos_profile_system_default,
+        )
         self.image = None
 
+        self.iteration_num = 0
+        self.moving_col = -1
+
         self.get_logger().info("FCN Server Node has been initialized.")
+
+    def temp_col_callback(self, msg: UInt16):
+        self.moving_col = msg.data
 
     def image_callback(self, msg: Image):
         self.image = msg
@@ -150,7 +162,13 @@ class FCNServerNode(Node):
         target_output = outputs[target_cls_key]
 
         # Post-process the results
-        target_col, empty_cols = self.post_process_results(target_output)
+        weights = [1.0] * 4
+        if self.iteration_num != 0 and self.moving_col != -1:
+            weights[self.moving_col] = 0.3
+
+        target_col, empty_cols = self.post_process_results(
+            target_output, np.array(weights)
+        )
 
         # Set the response
         response.target_col = target_col
@@ -160,9 +178,13 @@ class FCNServerNode(Node):
             f"Return response - empty cols: {empty_cols}, target col: {target_col}"
         )
 
+        self.iteration_num += 1
+
         return response
 
-    def post_process_results(self, results: np.ndarray) -> np.ndarray:
+    def post_process_results(
+        self, results: np.ndarray, weights: list = [1.0] * 4
+    ) -> np.ndarray:
         data = np.sum(results, axis=0)
 
         num_peaks = 4
@@ -170,6 +192,8 @@ class FCNServerNode(Node):
         _, top_peak_datas = self.find_top_peaks(
             data, num_peaks=num_peaks, smooth_sigma=5, min_distance=10
         )
+
+        top_peak_datas = top_peak_datas * weights
 
         max_peak_idx = int(np.argmax(top_peak_datas))
         # max_peak_value = top_peak_datas[max_peak_idx]
