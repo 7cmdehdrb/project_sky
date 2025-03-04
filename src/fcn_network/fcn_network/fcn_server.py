@@ -17,9 +17,12 @@ from custom_msgs.srv import FCNRequest
 from tf2_ros import *
 
 # Python
+from object_tracker.real_time_segmentation import (
+    RealTimeSegmentationNode,
+)
+from enum import Enum
 import cv2
 import cv_bridge
-from enum import Enum
 import numpy as np
 import torch
 from torchvision.transforms import Normalize
@@ -104,12 +107,17 @@ class FCNServerNode(Node):
         )
         self.image = None
 
+        self.get_logger().info("FCN Server Node has been initialized.")
+
     def image_callback(self, msg: Image):
         self.image = msg
 
     def fcn_request_callback(
         self, request: FCNRequest.Request, response: FCNRequest.Response
     ):
+        self.get_logger().info(
+            f"Request Received - target class: {str(request.target_cls)}"
+        )
         # Define the target class
         target_cls = request.target_cls
 
@@ -133,7 +141,7 @@ class FCNServerNode(Node):
 
         # Get the image
         img = self.bridge.imgmsg_to_cv2(self.image, "bgr8")
-        img = self.post_process_raw_image(img)  # TODO: Crop the image
+        img = RealTimeSegmentationNode.crop_image(img, 640, 480)
 
         # Predict the image
         outputs = self.predict(img)
@@ -145,8 +153,12 @@ class FCNServerNode(Node):
         target_col, empty_cols = self.post_process_results(target_output)
 
         # Set the response
-        response.empty_cols = empty_cols
         response.target_col = target_col
+        response.empty_cols = empty_cols
+
+        self.get_logger().info(
+            f"Return response - empty cols: {empty_cols}, target col: {target_col}"
+        )
 
         return response
 
@@ -159,7 +171,7 @@ class FCNServerNode(Node):
             data, num_peaks=num_peaks, smooth_sigma=5, min_distance=10
         )
 
-        max_peak_idx = np.argmax(top_peak_datas)
+        max_peak_idx = int(np.argmax(top_peak_datas))
         # max_peak_value = top_peak_datas[max_peak_idx]
 
         res = []
@@ -172,7 +184,8 @@ class FCNServerNode(Node):
         if not (res2 > num_peaks):
             res.append(res2)
 
-        return max_peak_idx, results
+        # target_col, empty_cols
+        return max_peak_idx, res
 
     def post_process_raw_image(self, img: np.ndarray) -> np.ndarray:
         if img.ndim == 2:
@@ -203,7 +216,7 @@ class FCNServerNode(Node):
 
         return np_outputs
 
-    def find_top_peaks(data, num_peaks=4, smooth_sigma=5, min_distance=10):
+    def find_top_peaks(self, data, num_peaks=4, smooth_sigma=5, min_distance=10):
         """
         데이터에서 상위 num_peaks개의 주요 피크를 찾는 함수.
 

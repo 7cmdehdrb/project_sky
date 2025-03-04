@@ -5,9 +5,9 @@ import tqdm
 install_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resource")
 
 # 설정값
-server_url = "http://7cmdehdrb.iptime.org:13670/share/KmT_m-fo"
-server_url = "http://7cmdehdrb.iptime.org:13670/api/public/dl/KmT_m-fo"
-filename = "best.pt"
+server_url = "http://7cmdehdrb.iptime.org:13670/share/1S7XDEgO"
+server_url = "http://7cmdehdrb.iptime.org:13670/api/public/dl/1S7XDEgO"
+filename = "best_model.pth"
 
 # 파일 다운로드
 local_filepath = os.path.join(install_path, filename)
@@ -28,8 +28,9 @@ else:
                 total=total_size, unit="B", unit_scale=True, desc=filename
             ) as pbar:
                 for chunk in response.iter_content(chunk_size=1024):
-                    f.write(chunk)
-                    pbar.update(len(chunk))
+                    if chunk:
+                        f.write(chunk)
+                        pbar.update(len(chunk))
         print(f"Downloaded {filename} to {local_filepath}")
 
         # 압축 파일이면 풀기 (옵션)

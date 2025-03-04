@@ -23,6 +23,7 @@ import sys
 import os
 
 from fcn_network.fcn_server import FCNClassNames, get_class_name
+import array
 
 
 class FCNClientNode(Node):
@@ -31,7 +32,7 @@ class FCNClientNode(Node):
 
         self.fcn_response: FCNRequest.Response = None
         self.fcn_occupied_response: FCNOccupiedRequest.Response = None
-        self.success = False
+        self.is_finished = True
 
         self.fcn_client = self.create_client(FCNRequest, "fcn_request")
         self.fcn_occupied_client = self.create_client(
@@ -50,7 +51,7 @@ class FCNClientNode(Node):
 
         self.get_logger().info("Service is available.")
 
-        self.run()
+        self.create_timer(1.0, self.run)
 
     def send_fcn_request(self, target_cls: str):
         request = FCNRequest.Request()
@@ -65,39 +66,53 @@ class FCNClientNode(Node):
             if response.target_col == -1:
                 raise Exception("Invalid target class.")
 
-            self.fcn_response = response
+            self.get_logger().info(
+                f"Received response - target col: {response.target_col}"
+            )
+            self.get_logger().info(
+                f"Received response - empty cols: {response.empty_cols.tolist()}"
+            )
 
-            self.get_logger().info(
-                f"Received response - empty cols: {self.fcn_response.empty_cols}"
-            )
-            self.get_logger().info(
-                f"Received response - target col: {self.fcn_response.target_col}"
-            )
+            self.send_fcn_occupied_request(response)
+
         except Exception as e:
-            self.get_logger().error(f"Service call failed: {e}")
-            self.fcn_response = None
+            self.get_logger().warn(f"Service call failed - fcn_callback: {e}")
+            self.is_finished = True
 
     def send_fcn_occupied_request(self, fcn_response: FCNRequest.Response):
         request = FCNOccupiedRequest.Request()
 
         if fcn_response is None:
-            self.get_logger().warn("FCN response is None.")
-            return
+            raise Exception("FCN response is None.")
 
-        request.target_col = fcn_response.target_col
-        request.empty_cols = fcn_response.empty_cols
+        empty_cols = fcn_response.empty_cols.tolist()
+        target_col = fcn_response.target_col
 
-        future: Future = self.fcn_client.call_async(request)
+        request.empty_cols = empty_cols
+        request.target_col = target_col
+
+        future: Future = self.fcn_occupied_client.call_async(request)
         future.add_done_callback(self.fcn_occupied_callback)
 
     def fcn_occupied_callback(self, future: Future):
+        print("fcn_occupied_callback")
         try:
             response: FCNOccupiedRequest.Response = future.result()
-            self.fcn_occupied_response = response
+
+            action = "Sweaping" if response.action else "Grasping"
+            self.get_logger().info(f"Received response - Action: {action}")
+            self.get_logger().info(
+                f"Received response - Moving row: {response.moving_row}"
+            )
+            self.get_logger().info(
+                f"Received response - Moving cols: {response.moving_cols.tolist()}"
+            )
 
         except Exception as e:
-            self.get_logger().error(f"Service call failed: {e}")
-            self.fcn_occupied_response = None
+            self.get_logger().warn(f"Service call failed - fcn_occupied_callback: {e}")
+
+        finally:
+            self.is_finished = True
 
     def handle_fcn_request(self):
         def announce():
@@ -115,53 +130,19 @@ class FCNClientNode(Node):
 
         # Check if the target class name is valid
         if not (target_cls in [cls.name.lower() for cls in FCNClassNames]):
-            os.system("clear")
+            # os.system("clear")
             self.get_logger().warn("Invalid class name.")
+            self.is_finished = True
             return None
 
         # Valid user input. Automatically update self.fcn_response
         os.system("clear")
         self.send_fcn_request(target_cls)
 
-        if self.fcn_response is None:
-            self.get_logger().warn("FCN response is None.")
-            os.system("clear")
-            return None
-
-        return self.fcn_response
-
-    def handle_fcn_occupied_request(self, fcn_response: FCNRequest.Response):
-        self.send_fcn_occupied_request(fcn_response)
-
-        if self.fcn_occupied_response is None:
-            return None
-
-        return self.fcn_occupied_response
-
     def run(self):
-        while True:
-            fcn_response: FCNRequest.Response = self.handle_fcn_request()
-
-            if fcn_response is None:
-                self.get_logger().warn("[Error on run()] FCN response is None.")
-                continue
-
-            fcn_occupied_response: FCNOccupiedRequest.Response = (
-                self.handle_fcn_occupied_request(fcn_response)
-            )
-
-            if fcn_occupied_response is None:
-                self.get_logger().warn(
-                    "[Error on run()] FCN occupied response is None."
-                )
-                continue
-
-            self.get_logger().info(
-                f"FCN occupied response - Action: {fcn_occupied_response.action}"
-            )
-            self.get_logger().info(
-                f"FCN occupied response - Col: {fcn_occupied_response.moving_cols}"
-            )
+        if self.is_finished:
+            self.is_finished = False
+            self.handle_fcn_request()
 
 
 def main():

@@ -179,12 +179,18 @@ class PointCloudGridIdentifier(Node):
             FCNOccupiedRequest, "fcn_occupied_request", self.fcn_request_callback
         )
 
+        self.get_logger().info("Pointcloud Grid Identifier Node has been initialized.")
+
         hz = 10
         self.timer = self.create_timer(float(1.0 / hz), self.publish_grid_marker)
 
     def fcn_request_callback(
         self, request: FCNOccupiedRequest.Request, response: FCNOccupiedRequest.Response
     ):
+        self.get_logger().info(
+            f"Request received: {int(request.target_col)}, {request.empty_cols.tolist()}"
+        )
+
         # Update All Grids
         for col in self.cols:
             is_front_grid_occupied = False
@@ -221,6 +227,18 @@ class PointCloudGridIdentifier(Node):
             if grid.is_occupied:
                 occupied_rows.append(grid.row_id)
 
+        # Exception: If there is no occupied grid in target grids
+        if len(occupied_rows) == 0:
+            response.action = False
+            response.moving_row = "Z"
+            response.moving_cols = [-1]
+
+            self.get_logger().warn(
+                "No occupied grid in the target grids.\nReturn response [-1]"
+            )
+
+            return response
+
         # Get Minimum row of the occupied grids
         first_occupied_row = min(occupied_rows)  # For example, 'A'
 
@@ -236,11 +254,16 @@ class PointCloudGridIdentifier(Node):
             result.append((grid, not grid.is_occupied))
 
         # Set the response
-        response.action = "grasping"
+        response.action = False
+        response.moving_row = first_occupied_row
         for grid, is_empty in result:
             if is_empty:
-                response.action = "sweeping"
+                response.action = True
                 response.moving_cols.append(grid.col_id)
+
+        self.get_logger().info(
+            f"Return response - Action: {response.action}, Moving row: {response.moving_row}, Moving cols: {response.moving_cols.tolist()}"
+        )
 
         return response
 
