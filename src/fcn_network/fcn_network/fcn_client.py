@@ -128,6 +128,11 @@ class FCNClientNode(Node):
 
         target_cls = input(">>> ")
 
+        if target_cls == "exit":
+            self.is_finished = True
+            self.send_fcn_request(target_cls)
+            return None
+
         # Check if the target class name is valid
         if not (target_cls in [cls.name.lower() for cls in FCNClassNames]):
             # os.system("clear")

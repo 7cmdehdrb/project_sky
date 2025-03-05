@@ -21,6 +21,7 @@ from object_tracker.real_time_segmentation import (
     RealTimeSegmentationNode,
 )
 from enum import Enum
+from matplotlib import pyplot as plt
 import cv2
 import cv_bridge
 import numpy as np
@@ -30,6 +31,7 @@ from torchvision.models.segmentation import fcn_resnet50
 from torch import nn, Tensor
 from scipy.signal import find_peaks
 from scipy.ndimage import gaussian_filter1d
+import os
 
 
 # FCNModel class
@@ -81,8 +83,12 @@ class FCNServerNode(Node):
         )
 
         # Load the pre-trained model
+        package_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "../resource")
+        )
+        model_path = os.path.join(package_path, "best_model.pth")
         self.state_dict: dict = torch.load(
-            "/home/min/7cmdehdrb/ros2_ws/src/fcn_network/resource/best_model.pth",  # TODO: Change the path
+            model_path,
             map_location=self.device,
         )
         self.filtered_state_dict = {
@@ -105,6 +111,16 @@ class FCNServerNode(Node):
             self.image_callback,
             qos_profile=qos_profile_system_default,
         )
+        self.image_publisher = self.create_publisher(
+            Image,
+            self.get_name() + "/processed_image",
+            qos_profile=qos_profile_system_default,
+        )
+        self.plot_publisher = self.create_publisher(
+            Image,
+            self.get_name() + "/plot_image",
+            qos_profile=qos_profile_system_default,
+        )
         self.temp_col_subscription = self.create_subscription(
             UInt16,
             self.get_name() + "/moving_col",
@@ -113,13 +129,57 @@ class FCNServerNode(Node):
         )
         self.image = None
 
+        # Post-processed data
+        self.target_output = None
+        self.post_processed_data = None
+        self.top_peak_idx = [0, 1, 2, 3]
+
         self.iteration_num = 0
         self.moving_col = -1
 
         self.get_logger().info("FCN Server Node has been initialized.")
 
+        self.create_timer(1.0, self.publish_processed_image)
+
+    def publish_processed_image(self):
+        if self.target_output is None or self.post_processed_data is None:
+            return
+
+        # Convert the target output to a ROS2 Image message
+        target_output_normalized = cv2.normalize(
+            self.target_output, None, 0, 255, cv2.NORM_MINMAX
+        ).astype(np.uint8)
+        target_output_colored = cv2.applyColorMap(
+            target_output_normalized, cv2.COLORMAP_JET
+        )
+        msg = self.bridge.cv2_to_imgmsg(target_output_colored, encoding="bgr8")
+
+        self.image_publisher.publish(msg)
+
+        # Convert the post-processed data to a ROS2 Image message
+        fig = plt.figure(figsize=(16, 9))
+        plt.plot(self.post_processed_data)
+
+        for peak_idx in self.top_peak_idx:
+            plt.axvline(x=peak_idx, color="r", linestyle="--", linewidth=5)
+
+        plt.xlabel("Pixel")
+        plt.ylabel("Intensity")
+        plt.title("Post-processed Data")
+
+        # Convert the plot to a ROS2 Image message
+        fig.canvas.draw()
+        plot_image = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+        plot_image = plot_image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        plot_image_msg = self.bridge.cv2_to_imgmsg(plot_image, encoding="rgb8")
+
+        self.plot_publisher.publish(plot_image_msg)
+        plt.close(fig)
+
     def temp_col_callback(self, msg: UInt16):
         self.moving_col = msg.data
+
+        self.get_logger().info(f"Force set moving column: {self.moving_col}")
 
     def image_callback(self, msg: Image):
         self.image = msg
@@ -130,6 +190,13 @@ class FCNServerNode(Node):
         self.get_logger().info(
             f"Request Received - target class: {str(request.target_cls)}"
         )
+
+        if str(request.target_cls) == "exit":
+            response.target_col = -1
+            response.empty_cols = []
+            self.iteration_num = 0
+            return response
+
         # Define the target class
         target_cls = request.target_cls
 
@@ -161,6 +228,9 @@ class FCNServerNode(Node):
         # Get the target output
         target_output = outputs[target_cls_key]
 
+        # Set post-processed data: the target output
+        self.target_output = target_output
+
         # Post-process the results
         weights = [1.0] * 4
         if self.iteration_num != 0 and self.moving_col != -1:
@@ -189,14 +259,22 @@ class FCNServerNode(Node):
 
         num_peaks = 4
 
-        _, top_peak_datas = self.find_top_peaks(
+        # Find the top peaks and apply weights
+        top_peak_idx, top_peak_datas = self.find_top_peaks(
             data, num_peaks=num_peaks, smooth_sigma=5, min_distance=10
         )
-
         top_peak_datas = top_peak_datas * weights
 
+        # Sort the top_peak_idx and top_peak_datas in ascending order of top_peak_idx
+        sorted_indices = np.argsort(top_peak_idx)
+        top_peak_idx = np.array(top_peak_idx)[sorted_indices]
+        top_peak_datas = np.array(top_peak_datas)[sorted_indices]
+
+        # Set post-processed data: the post-processed data
+        self.post_processed_data = data
+        self.top_peak_idx = top_peak_idx
+
         max_peak_idx = int(np.argmax(top_peak_datas))
-        # max_peak_value = top_peak_datas[max_peak_idx]
 
         res = []
         res1 = max_peak_idx - 1
