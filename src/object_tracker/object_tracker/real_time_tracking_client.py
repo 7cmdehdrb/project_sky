@@ -74,10 +74,23 @@ class MegaPoseClient:
         # Parameters
         self.is_configured = False
         self.is_segmentation_valid = False
-        self.score_threshold = 0.7
+        self.score_threshold = 0.5
 
+        temp = [
+            221.11175537109375,
+            142.1138916015625,
+            282.87127685546875,
+            354.2355651855469,
+        ]
+        int_temp = [int(i) for i in temp]
+
+        # self.initial_data = {
+        #     "detections": [[260.0, 110.0, 350.0, 343.0]],
+        #     "labels": ["yello_smoothie"],
+        #     "use_depth": False,
+        # }
         self.initial_data = {
-            "detections": [[260.0, 110.0, 350.0, 343.0]],
+            "detections": [int_temp],
             "labels": ["smoothie"],
             "use_depth": False,
         }
@@ -87,6 +100,8 @@ class MegaPoseClient:
             "refiner_iterations": 1,
             "use_depth": False,
         }
+
+        self.last_time = self.node.get_clock().now()
 
         # Run Once
         while True:
@@ -113,6 +128,13 @@ class MegaPoseClient:
 
     def run(self, frame: np.array):
         """Send a frame and json data to the server and receive the result."""
+        time = self.node.get_clock().now()
+
+        dt = (time - self.last_time).nanoseconds / 1e9
+        self.last_time = time
+
+        self.node.get_logger().info(f"dt: {round(dt, 3)}, FPS: {round(1 / dt, 1)}")
+
         cto, score, bbox = self.send_pose_request(
             self.socket,
             frame,
@@ -135,6 +157,8 @@ class MegaPoseClient:
         # Get PoseStamped message
         cto_matrix = np.array(cto).reshape(4, 4)
         cto_matrix_ros_frame = QuaternionAngle.transform_realsense_to_ros(cto_matrix)
+        print(f"BBox: {bbox}")
+        print(f"Score: {score}")
 
         translation_matrix = cto_matrix_ros_frame[:3, 3]
         rotation_matrix = cto_matrix_ros_frame[:3, :3]
@@ -328,15 +352,19 @@ class RealTimeTrackingClientNode(Node):
 
         self.frame = None
 
-        self.timer = self.create_timer(0.1, self.run)
+        self.timer = self.create_timer(0.05, self.run)
 
     def image_callback(self, msg: Image):
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
 
-        if frame.shape[:2] == (720, 1280):
+        width = frame.shape[1]
+        height = frame.shape[0]
+        print(f"Image shape: {frame.shape[:2]}")
+
+        if width == 1280 and height == 720:
             self.frame = self.crop_and_resize_image(frame)
 
-        elif frame.shape[:2] != (self.height, self.width):
+        elif width == self.width and height == self.height:
             self.frame = frame
 
         else:
@@ -346,7 +374,7 @@ class RealTimeTrackingClientNode(Node):
         K = np.array(msg.k).reshape(3, 3)
         image_size = (msg.height, msg.width)
 
-        if image_size == (720, 1280):
+        if msg.height == 720 and msg.width == 1280:
             image_size = (self.height, self.width)
 
             offset = int((msg.width - self.width) // 2)
@@ -356,7 +384,7 @@ class RealTimeTrackingClientNode(Node):
             K[0, 2] = (K[0, 2] - offset) * (self.width / msg.width)
             K[1, 2] = K[1, 2] * (self.height / msg.height)
 
-        elif image_size == (self.height, self.width):
+        elif msg.height == self.height and msg.width == self.width:
             # Do nothing
             pass
 

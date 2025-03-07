@@ -284,6 +284,7 @@ AMENT_IGNORE
 *.png
 *.pth
 *.pt
+*.mtl
 
 # Ignore files larger than 50MB
 *.[5-9][0-9]M

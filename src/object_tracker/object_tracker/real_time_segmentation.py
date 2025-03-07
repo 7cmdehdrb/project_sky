@@ -42,6 +42,7 @@ class RealTimeSegmentationNode(Node):
 
         # Load YOLO v11 Model
         self.model = YOLO(model_path, verbose=False)
+        self.model.eval()
         # Load CV Bridge
         self.bridge = CvBridge()
 

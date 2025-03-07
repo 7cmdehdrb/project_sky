@@ -20,6 +20,9 @@ from tf2_ros import *
 from object_tracker.real_time_segmentation import (
     RealTimeSegmentationNode,
 )
+import os
+import sys
+import json
 from enum import Enum
 from matplotlib import pyplot as plt
 import cv2
@@ -31,7 +34,6 @@ from torchvision.models.segmentation import fcn_resnet50
 from torch import nn, Tensor
 from scipy.signal import find_peaks
 from scipy.ndimage import gaussian_filter1d
-import os
 
 
 # FCNModel class
@@ -101,6 +103,10 @@ class FCNServerNode(Node):
         # Load CV Bridge
         self.bridge = cv_bridge.CvBridge()
 
+        grid_data_path = os.path.join(package_path, "grid_data.json")
+        with open(grid_data_path, "r") as f:
+            self.grid_data = json.load(f)
+
         # ROS2 Subscribers, Publishers, and Services
         self.srv = self.create_service(
             FCNRequest, "fcn_request", self.fcn_request_callback
@@ -132,7 +138,7 @@ class FCNServerNode(Node):
         # Post-processed data
         self.target_output = None
         self.post_processed_data = None
-        self.top_peak_idx = [0, 1, 2, 3]
+        self.top_peak_idx = [i for i in range(len(self.grid_data["columns"]))]
 
         self.iteration_num = 0
         self.moving_col = -1
@@ -188,7 +194,7 @@ class FCNServerNode(Node):
         self, request: FCNRequest.Request, response: FCNRequest.Response
     ):
         self.get_logger().info(
-            f"Request Received - target class: {str(request.target_cls)}"
+            f"Request Received - target class is {str(request.target_cls)}"
         )
 
         if str(request.target_cls) == "exit":
@@ -232,7 +238,7 @@ class FCNServerNode(Node):
         self.target_output = target_output
 
         # Post-process the results
-        weights = [1.0] * 4
+        weights = [1.0] * len(self.grid_data["columns"])
         if self.iteration_num != 0 and self.moving_col != -1:
             weights[self.moving_col] = 0.3
 
@@ -245,19 +251,18 @@ class FCNServerNode(Node):
         response.empty_cols = empty_cols
 
         self.get_logger().info(
-            f"Return response - empty cols: {empty_cols}, target col: {target_col}"
+            f"Return response - {str(request.target_cls)} is located in colum called {empty_cols}.\n\
+                move it to colunm  called {target_col}"
         )
 
         self.iteration_num += 1
 
         return response
 
-    def post_process_results(
-        self, results: np.ndarray, weights: list = [1.0] * 4
-    ) -> np.ndarray:
+    def post_process_results(self, results: np.ndarray, weights: list) -> np.ndarray:
         data = np.sum(results, axis=0)
 
-        num_peaks = 4
+        num_peaks = len(self.grid_data["columns"])
 
         # Find the top peaks and apply weights
         top_peak_idx, top_peak_datas = self.find_top_peaks(

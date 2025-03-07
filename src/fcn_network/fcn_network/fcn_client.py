@@ -62,16 +62,17 @@ class FCNClientNode(Node):
     def fcn_callback(self, future: Future):
         try:
             response: FCNRequest.Response = future.result()
+            self.fcn_response = response
 
             if response.target_col == -1:
                 raise Exception("Invalid target class.")
 
-            self.get_logger().info(
-                f"Received response - target col: {response.target_col}"
-            )
-            self.get_logger().info(
-                f"Received response - empty cols: {response.empty_cols.tolist()}"
-            )
+            # self.get_logger().info(
+            #     f"Received response - target col: {response.target_col}"
+            # )
+            # self.get_logger().info(
+            #     f"Received response - empty cols: {response.empty_cols.tolist()}"
+            # )
 
             self.send_fcn_occupied_request(response)
 
@@ -95,18 +96,29 @@ class FCNClientNode(Node):
         future.add_done_callback(self.fcn_occupied_callback)
 
     def fcn_occupied_callback(self, future: Future):
-        print("fcn_occupied_callback")
         try:
             response: FCNOccupiedRequest.Response = future.result()
+            self.fcn_occupied_response = response
+
+            if response.moving_cols == "Z":
+                raise Exception("Invalid moving cols.")
 
             action = "Sweaping" if response.action else "Grasping"
-            self.get_logger().info(f"Received response - Action: {action}")
-            self.get_logger().info(
-                f"Received response - Moving row: {response.moving_row}"
-            )
-            self.get_logger().info(
-                f"Received response - Moving cols: {response.moving_cols.tolist()}"
-            )
+            moving_cols = self.fcn_occupied_response.moving_cols.tolist()
+
+            self.get_logger().info(f"Received response!")
+
+            if response.action:
+                for col in moving_cols:
+                    self.get_logger().info(
+                        f"Command: {action} {self.fcn_occupied_response.moving_row}{self.fcn_response.target_col} to \
+                            {self.fcn_occupied_response.moving_row}{col}"
+                    )
+
+            else:
+                self.get_logger().info(
+                    f"Command: {action} {self.fcn_occupied_response.moving_row}{self.fcn_response.target_col}"
+                )
 
         except Exception as e:
             self.get_logger().warn(f"Service call failed - fcn_occupied_callback: {e}")
@@ -140,7 +152,6 @@ class FCNClientNode(Node):
             self.is_finished = True
             return None
 
-        # Valid user input. Automatically update self.fcn_response
         os.system("clear")
         self.send_fcn_request(target_cls)
 

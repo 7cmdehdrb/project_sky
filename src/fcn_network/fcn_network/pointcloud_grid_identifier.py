@@ -17,6 +17,9 @@ from custom_msgs.srv import FCNOccupiedRequest
 from tf2_ros import *
 
 # Python
+import os
+import sys
+import json
 import numpy as np
 from base_package.header import PointCloudTransformer, QuaternionAngle
 
@@ -139,12 +142,31 @@ class PointCloudGridIdentifier(Node):
     def __init__(self):
         super().__init__("pointcloud_grid_identifier_node")
 
+        package_path = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "../resource")
+        )
+        grid_data_path = os.path.join(package_path, "grid_data.json")
+        with open(grid_data_path, "r") as f:
+            self.grid_data = json.load(f)
+
         # Grid Parameters
-        self.rows = ["A", "B", "C"]  # A -> Front(-), C -> Back(+)
-        self.cols = [0, 1, 2, 3]  # Left(+) -> Right(-)
-        self.grid_size = Vector3(x=0.13, y=0.20, z=0.33)
-        self.start_center_coord = Point(x=0.9, y=0.3, z=0.0)
-        self.point_threshold = 100
+        self.rows = self.grid_data[
+            "rows"
+        ]  # ["A", "B", "C"] : A -> Front(-), C -> Back(+)
+        self.cols = self.grid_data["columns"]  # [0, 1, 2, 3] : Left(+) -> Right(-)
+
+        grid_identifier = self.grid_data["grid_identifier"]
+        self.grid_size = Vector3(
+            x=grid_identifier["grid_size"]["x"],
+            y=grid_identifier["grid_size"]["y"],
+            z=grid_identifier["grid_size"]["z"],
+        )
+        self.start_center_coord = Point(
+            x=grid_identifier["start_center_coord"]["x"],
+            y=grid_identifier["start_center_coord"]["y"],
+            z=grid_identifier["start_center_coord"]["z"],
+        )
+        self.point_threshold = grid_identifier["point_threshold"]
 
         # self.rows = [
         #     chr(i) for i in range(65, 65 + 15)
@@ -188,7 +210,8 @@ class PointCloudGridIdentifier(Node):
         self, request: FCNOccupiedRequest.Request, response: FCNOccupiedRequest.Response
     ):
         self.get_logger().info(
-            f"Request received: {int(request.target_col)}, {request.empty_cols.tolist()}"
+            f"Request received: \
+                Move target from colun '{int(request.target_col)}' to '{request.empty_cols.tolist()}'"
         )
 
         # Update All Grids
@@ -231,11 +254,9 @@ class PointCloudGridIdentifier(Node):
         if len(occupied_rows) == 0:
             response.action = False
             response.moving_row = "Z"
-            response.moving_cols = [-1]
+            response.moving_cols = []
 
-            self.get_logger().warn(
-                "No occupied grid in the target grids.\nReturn response [-1]"
-            )
+            self.get_logger().error("No occupied grid in the target grids.")
 
             return response
 
@@ -261,8 +282,11 @@ class PointCloudGridIdentifier(Node):
                 response.action = True
                 response.moving_cols.append(grid.col_id)
 
+        action = "Sweaping" if response.action else "Grasping"
         self.get_logger().info(
-            f"Return response - Action: {response.action}, Moving row: {response.moving_row}, Moving cols: {response.moving_cols.tolist()}"
+            f"Return response - \
+                {action} from {response.moving_row}{int(request.target_col)} \
+                    to {response.moving_row}{response.moving_cols.tolist()}"
         )
 
         return response
