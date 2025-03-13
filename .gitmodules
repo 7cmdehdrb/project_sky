@@ -1,3 +1,15 @@
 [submodule "third_party/visp"]
 	path = third_party/visp
 	url = https://github.com/lagadic/visp.git
+[submodule "src/moveit2"]
+	path = src/moveit2
+	url = https://github.com/7cmdehdrb/moveit2.git
+	branch = branch_7cmdehdrb
+[submodule "src/moveit_msgs"]
+	path = src/moveit_msgs
+	url = https://github.com/moveit/moveit_msgs.git
+	branch = humble
+[submodule "src/moveit_resources"]
+	path = src/moveit_resources
+	url = https://github.com/7cmdehdrb/moveit_resources.git
+	branch = branch_7cmdehdrb
