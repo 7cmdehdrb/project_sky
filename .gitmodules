@@ -13,3 +13,11 @@
 	path = src/moveit_resources
 	url = https://github.com/7cmdehdrb/moveit_resources.git
 	branch = branch_7cmdehdrb
+[submodule "src/Universal_Robots_ROS2_Driver"]
+	path = src/Universal_Robots_ROS2_Driver
+	url = https://github.com/UniversalRobots/Universal_Robots_ROS2_Driver.git
+	branch = humble
+[submodule "src/ur_description"]
+	path = src/ur_description
+	url = https://github.com/UniversalRobots/Universal_Robots_ROS2_Description.git
+	branch = humble

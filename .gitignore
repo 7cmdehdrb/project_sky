@@ -286,6 +286,16 @@ AMENT_IGNORE
 *.pt
 *.mtl
 
+# Ignore all 3D model files
+*.obj
+*.fbx
+*.stl
+*.dae
+*.3ds
+*.blend
+*.gltf
+*.glb
+
 # Ignore files larger than 50MB
 *.[5-9][0-9]M
 *.1[0-9][0-9]M

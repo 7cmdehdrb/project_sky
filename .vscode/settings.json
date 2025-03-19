@@ -2,13 +2,14 @@
     "python.autoComplete.extraPaths": [
         "/opt/ros/humble/lib/python3.10/site-packages",
         "/opt/ros/humble/local/lib/python3.10/dist-packages",
-        "/home/irol/workspace/project_sky/install/custom_msgs/local/lib/python3.10/dist-packages"
+        "./install/custom_msgs/local/lib/python3.10/dist-packages",
+        "./install/object_tracker/lib/python3.10/site-packages",
     ],
     "python.analysis.extraPaths": [
         "/opt/ros/humble/lib/python3.10/site-packages",
         "/opt/ros/humble/local/lib/python3.10/dist-packages",
-        "/home/irol/workspace/project_sky/install/custom_msgs/local/lib/python3.10/dist-packages",
-        "./install/object_tracker/lib/python3.10/site-packages"
+        "./install/custom_msgs/local/lib/python3.10/dist-packages",
+        "./install/object_tracker/lib/python3.10/site-packages",
     ],
     "cmake.ignoreCMakeListsMissing": true
 }
