@@ -80,10 +80,10 @@ class PointCloudGridIdentifier(Node):
             self.points = points_in_grid.shape[0]
 
         def get_marker(self, header: Header):
-            temp_center_coord = Point(
-                x=self.center_coord.x, y=self.center_coord.y, z=self.center_coord.z
-            )
-            temp_center_coord.z = -0.15
+            # temp_center_coord = Point(
+            #     x=self.center_coord.x, y=self.center_coord.y, z=self.center_coord.z
+            # )
+            # temp_center_coord.z = -0.15
 
             marker = Marker(
                 header=header,
@@ -92,14 +92,14 @@ class PointCloudGridIdentifier(Node):
                 type=Marker.CUBE,
                 action=Marker.ADD,
                 pose=Pose(
-                    position=temp_center_coord,
+                    position=self.center_coord,
                     orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
                 ),
                 scale=Vector3(
                     x=self.size.x * 0.9,
                     y=self.size.y * 0.8,
-                    z=0.01,
-                    # z=self.size.z,
+                    # z=0.01,
+                    z=self.size.z,
                 ),
                 color=ColorRGBA(
                     r=1.0 if self.points > self.threshold else 0.0,
@@ -166,6 +166,7 @@ class PointCloudGridIdentifier(Node):
             y=grid_identifier["start_center_coord"]["y"],
             z=grid_identifier["start_center_coord"]["z"],
         )
+        print(self.start_center_coord)
         self.point_threshold = grid_identifier["point_threshold"]
 
         # self.rows = [
@@ -200,6 +201,13 @@ class PointCloudGridIdentifier(Node):
         self.srv = self.create_service(
             FCNOccupiedRequest, "fcn_occupied_request", self.fcn_request_callback
         )
+        
+        self.command_text_publisher = self.create_publisher(
+            String,
+            "/hello",
+            qos_profile_system_default,
+        )
+        self.command_text = "No command is given."
 
         self.get_logger().info("Pointcloud Grid Identifier Node has been initialized.")
 
@@ -283,6 +291,11 @@ class PointCloudGridIdentifier(Node):
                 response.moving_cols.append(grid.col_id)
 
         action = "Sweaping" if response.action else "Grasping"
+        
+        # self.command_text = f"{action} from {response.moving_row}{int(request.target_col)} \
+        #             to {response.moving_row}{response.moving_cols.tolist()}"
+        self.command_text = f"Remove the object at {response.moving_row}{int(request.target_col)}"
+        
         self.get_logger().info(
             f"Return response - \
                 {action} from {response.moving_row}{int(request.target_col)} \
@@ -329,6 +342,8 @@ class PointCloudGridIdentifier(Node):
         return grids, grids_dict
 
     def publish_grid_marker(self):
+        self.command_text_publisher.publish(String(data=self.command_text))
+        
         header = Header(frame_id="camera1_link", stamp=self.get_clock().now().to_msg())
 
         marker_array = MarkerArray()

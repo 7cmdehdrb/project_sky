@@ -88,7 +88,7 @@ class FCNServerNode(Node):
         package_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "../resource")
         )
-        model_path = os.path.join(package_path, "best_model.pth")
+        model_path = os.path.join(package_path, "best_model_0318.pth")
         self.state_dict: dict = torch.load(
             model_path,
             map_location=self.device,
@@ -96,6 +96,9 @@ class FCNServerNode(Node):
         self.filtered_state_dict = {
             k: v for k, v in self.state_dict.items() if "aux_classifier" not in k
         }
+        
+        self.gain = 2.0
+        
         self.model.eval()
         self.model.load_state_dict(self.filtered_state_dict, strict=False)
         self.model = self.model.to(self.device)
@@ -133,6 +136,7 @@ class FCNServerNode(Node):
             self.temp_col_callback,
             qos_profile=qos_profile_system_default,
         )
+
         self.image = None
 
         # Post-processed data
@@ -155,10 +159,10 @@ class FCNServerNode(Node):
         target_output_normalized = cv2.normalize(
             self.target_output, None, 0, 255, cv2.NORM_MINMAX
         ).astype(np.uint8)
-        target_output_colored = cv2.applyColorMap(
-            target_output_normalized, cv2.COLORMAP_JET
-        )
-        msg = self.bridge.cv2_to_imgmsg(target_output_colored, encoding="bgr8")
+        # target_output_colored = cv2.applyColorMap(
+        #     target_output_normalized, cv2.COLORMAP_JET
+        # )
+        msg = self.bridge.cv2_to_imgmsg(target_output_normalized, encoding="mono8")
 
         self.image_publisher.publish(msg)
 
@@ -225,10 +229,11 @@ class FCNServerNode(Node):
             return response
 
         # Get the image
-        img = self.bridge.imgmsg_to_cv2(self.image, "bgr8")
+        img = self.bridge.imgmsg_to_cv2(self.image, "rgb8")
         img = RealTimeSegmentationNode.crop_image(img, 640, 480)
 
         # Predict the image
+        self.model.eval()
         outputs = self.predict(img)
 
         # Get the target output
@@ -239,7 +244,9 @@ class FCNServerNode(Node):
 
         # Post-process the results
         weights = [1.0] * len(self.grid_data["columns"])
-        if self.iteration_num != 0 and self.moving_col != -1:
+        if self.moving_col == 9:
+            pass
+        elif self.iteration_num != 0 and self.moving_col != -1:
             weights[self.moving_col] = 0.3
 
         target_col, empty_cols = self.post_process_results(
@@ -260,13 +267,16 @@ class FCNServerNode(Node):
         return response
 
     def post_process_results(self, results: np.ndarray, weights: list) -> np.ndarray:
-        data = np.sum(results, axis=0)
+        
+        normalized_results = results * np.exp(-self.gain * (1 - results))  # 지수 함수로 가중치 적용
+        
+        data = np.sum(normalized_results, axis=0)
 
         num_peaks = len(self.grid_data["columns"])
 
         # Find the top peaks and apply weights
         top_peak_idx, top_peak_datas = self.find_top_peaks(
-            data, num_peaks=num_peaks, smooth_sigma=5, min_distance=10
+            data, num_peaks=num_peaks, smooth_sigma=10, min_distance=10
         )
         top_peak_datas = top_peak_datas * weights
 
@@ -288,8 +298,11 @@ class FCNServerNode(Node):
         if not (res1 < 0):
             res.append(res1)
 
-        if not (res2 > num_peaks):
+        if not (res2 > (num_peaks - 1)):
             res.append(res2)
+            
+        print(max_peak_idx)
+        print(top_peak_datas)
 
         # target_col, empty_cols
         return max_peak_idx, res

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ROS Image Stream</title>
+</head>
+<body>
+    <div style="display: flex;">
+        <h1 style="justify-content: center; align-items: center; display: flex;">Real-World FCN Network Experiment</h1>
+    </div>
+
+    <div style="display: flex;">
+        <div>
+            <h3 style="display: flex; justify-content: center; align-items: center;" >Original Image</h3>
+            <img id="rosImage1" 
+            src="http://localhost:8080/stream?topic=/camera/camera1/color/image_raw"
+            alt="ROS Stream"
+            width="640" height="340" />
+        </div>
+
+        <div>
+            <h3 style="display: flex; justify-content: center; align-items: center;" >FCN Response</h3>
+            <div style="display: flex; justify-content: center; align-items: center; width: 640px; height: 340px;">
+                <h3 class="text">Hello World!</h3>
+            </div>
+        </div>
+    </div>
+    
+    <div style="display: flex;">
+        <div>
+            <h3 style="display: flex; justify-content: center; align-items: center;" >1D PDM</h3>
+            <img id="rosImage2" 
+            src="http://localhost:8080/stream?topic=/fcn_server_node/plot_image"
+            alt="ROS Stream"
+            width="640" height="480"
+             />
+        </div>
+    
+        <div>
+            <h3 style="display: flex; justify-content: center; align-items: center;" >2D PDM</h3>
+            <img id="rosImage" 
+            src="http://localhost:8080/stream?topic=/fcn_server_node/processed_image"
+            alt="ROS Stream" 
+            width="640" height="480"
+             />
+        </div>
+    </div>
+    
+
+    
+
+    <script src="roslib.js"></script>
+    <script>
+        var ros = new ROSLIB.Ros({
+            url: 'ws://localhost:9090'  // rosbridge WebSocket URL
+        });
+
+        ros.on('connection', function() {
+            console.log('Connected to websocket server.');
+        });
+
+        const textTopic = new ROSLIB.Topic({
+            ros: ros,
+            name: '/hello',
+            messageType: 'std_msgs/String'
+        });
+
+        textTopic.subscribe(function(message) {
+            console.log('Received message on ' + textTopic.name + ': ' + message.data);
+            document.querySelector('.text').textContent = message.data;
+        });
+
+    </script>
+</body>
+</html>
