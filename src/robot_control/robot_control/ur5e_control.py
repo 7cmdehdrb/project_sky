@@ -5,6 +5,7 @@ from rclpy.time import Time
 from rclpy.duration import Duration
 from rclpy.task import Future
 from rclpy.qos import QoSProfile, qos_profile_system_default
+from rclpy.action import ActionClient
 
 # Message
 from std_msgs.msg import *
@@ -17,6 +18,8 @@ from shape_msgs.msg import *
 from moveit_msgs.srv import *
 from moveit_msgs.action import *
 from moveit_msgs.msg import *
+from moveit_msgs.action import ExecuteTrajectory
+
 
 # TF
 from tf2_ros import *
@@ -27,6 +30,7 @@ import sys
 import time
 import numpy as np
 from abc import ABC, abstractmethod
+import json
 
 
 class ForwardKinematics(object):
@@ -325,6 +329,10 @@ class MoveitClient(object):
         self.get_planning_scene_client = SRVClient(
             self._node, "/get_planning_scene", GetPlanningScene
         )
+
+        self.execute_trajectory_action_client = ActionClient(
+            self, ExecuteTrajectory, "/execute_trajectory"
+        )
         # <<< Service Clients <<<
 
         # >>> Main Loop >>>
@@ -397,6 +405,22 @@ class MoveitClient(object):
                 )
 
     # <<< Main Loop <<<
+    def feedback_callback(self, feedback_msg):
+        self.get_logger().info(f"Received feedback: {feedback_msg}")
+
+    def goal_response_callback(self, future):
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            self.get_logger().info("Goal rejected.")
+            return
+
+        self.get_logger().info("Goal accepted, waiting for result...")
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(self.result_callback)
+
+    def result_callback(self, future):
+        result = future.result().result
+        self.get_logger().info(f"Result received: {result}")
 
     # >>> Handle Responses >>>
     def handle_cartesian_path_response(
@@ -408,7 +432,7 @@ class MoveitClient(object):
             self._node.get_logger().warn(
                 f"Error code in compute_cartesian_path service: {code}/{code_type}"
             )
-            return None
+            return None, None
 
         trajectory: RobotTrajectory = response.solution
         fraction = response.fraction
@@ -422,7 +446,7 @@ class MoveitClient(object):
         )
         self.end_effector_path_publisher.publish(eef_path)
 
-        return eef_path
+        return eef_path, trajectory
 
     def handle_compute_fk_response(
         self, response: GetPositionFK.Response
