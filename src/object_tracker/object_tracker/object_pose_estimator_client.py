@@ -17,6 +17,7 @@ from custom_msgs.msg import (
     BoundingBox3D,
     BoundingBox3DMultiArray,
 )
+from builtin_interfaces.msg import Duration as ROS2Duration
 from custom_msgs.srv import MegaposeRequest
 
 # TF
@@ -82,6 +83,7 @@ class MegaPoseClient(object):
             marker.pose = bbox3d.pose
             marker.scale = bbox3d.scale
             marker.color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=1.0)
+            marker.lifetime = ROS2Duration(sec=5, nanosec=0)
             marker_array.markers.append(marker)
 
         return marker_array

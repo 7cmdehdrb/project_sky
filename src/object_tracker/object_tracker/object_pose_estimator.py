@@ -32,6 +32,8 @@ from cv_bridge import CvBridge
 import cv2
 
 # Python
+import os
+import sys
 import numpy as np
 import time
 
@@ -65,6 +67,8 @@ class MegaPoseEstimator(MegaPoseClient):
             self.camera_info_callback,
             qos_profile=qos_profile_system_default,
         )
+
+        self.segmentation_data = BoundingBoxMultiArray()
 
         # Parameters
         self.score_threshold = 0.7
@@ -120,6 +124,8 @@ class MegaPoseEstimator(MegaPoseClient):
             self.node.get_logger().warn("Failed to set intrinsics.")
 
     def segmentation_callback(self, msg: BoundingBoxMultiArray):
+        self.segmentation_data = msg
+
         data = {"detections": [], "labels": [], "use_depth": False}
 
         detections = []
@@ -201,6 +207,13 @@ class ObjectPoseEstimator(Node):
 
         # >>> Data
         self.image = None
+
+        resource_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "resource"
+        )
+        with open(os.path.join(resource_dir, "obj_bounds.json"), "r") as f:
+            self.obj_bounds = json.load(f)
+
         # <<< Data
 
         # >>> Subscribers
@@ -234,60 +247,90 @@ class ObjectPoseEstimator(Node):
         np_image = self.bridge.imgmsg_to_cv2(self.image, desired_encoding="bgr8")
         np_image = RealTimeSegmentationNode.crop_image(np_image)
 
-        results = self.tracking_client.send_pose_request(
-            image=np_image, json_data=self.tracking_client.detected_data
-        )
+        # TODO
 
-        if results is None:
-            self.get_logger().warn("No result received.")
-            return response
+        """
+            self.detected_data = {
+            # "labels": ["alive", "green_tea"],
+            # "detections": [
+            #     list(map(int, [352.0, 261.0, 404.0, 392.0])),
+            #     list(map(int, [475.0, 234.0, 514.0, 359.0])),
+            # ],
+            # "labels": ["alive"],
+            # "detections": [list(map(int, [352.0, 261.0, 404.0, 392.0]))],
+            "labels": [],
+            "detections": [],
+            "use_depth": False,
+        }
+        """
+        labels = self.tracking_client.detected_data["labels"]
+        detections = self.tracking_client.detected_data["detections"]
 
         response_msg = BoundingBox3DMultiArray()
-        for idx, result in enumerate(results):
-            result: dict
+        for label, detection in zip(labels, detections):
+            data = {
+                "detections": [detection],
+                "labels": [label],
+                "use_depth": False,
+            }
+            results = self.tracking_client.send_pose_request(
+                image=np_image, json_data=data
+            )
 
-            score = result["score"]
-            cTo_matrix = np.array(result["cTo"]).reshape(4, 4)
-
-            if score < self.tracking_client.score_threshold:
+            if results is None:
+                self.get_logger().warn(f"Failed to get results for {label}")
                 continue
 
-            cTo_matrix_ros = QuaternionAngle.transform_realsense_to_ros(cTo_matrix)
-            translation_matrix = cTo_matrix_ros[:3, 3]
-
-            rotation_matrix = cTo_matrix_ros[:3, :3]
-            rpy_matrix = QuaternionAngle.euler_from_rotation_matrix(rotation_matrix)
-            quaternion_matrix = QuaternionAngle.quaternion_from_euler(*rpy_matrix)
-
-            object_id = self.tracking_client.detected_data["labels"][idx]
-
-            bbox_3d = BoundingBox3D(
-                # id=object_id,
-                cls=self.tracking_client.clss[object_id],  # black
-                conf=result["score"],
-                pose=Pose(
-                    position=Point(**dict(zip(["x", "y", "z"], translation_matrix))),
-                    orientation=Quaternion(
-                        **dict(zip(["x", "y", "z", "w"], quaternion_matrix))
-                    ),
-                ),
-                scale=Vector3(
-                    x=0.1,
-                    y=0.1,
-                    z=0.1,
-                ),
-            )
-            response_msg.data.append(bbox_3d)
-
-        self.get_logger().info(
-            f"Megapose returns {len(results)} objects and publish {len(response_msg.data)} objects."
-        )
+            bbox_3d = self.post_process_result(results[0], label)
+            if bbox_3d is not None:
+                response_msg.data.append(bbox_3d)
 
         response.response = response_msg
 
         return response
 
     # <<< Callbacks
+
+    def post_process_result(self, result: dict, label: str) -> BoundingBox3D:
+        score = result["score"]
+        cTo_matrix = np.array(result["cTo"]).reshape(4, 4)
+
+        cls = self.tracking_client.clss[label]
+
+        if score < self.tracking_client.score_threshold:
+            return None
+
+        offset_matrix = np.zeros((4, 4))
+        offset_matrix[0, 3] = 0.06
+        cTo_matrix += offset_matrix
+
+        cTo_matrix_ros = QuaternionAngle.transform_realsense_to_ros(cTo_matrix)
+        translation_matrix = cTo_matrix_ros[:3, 3] + np.array(
+            [0, 0, self.obj_bounds[label]["z"] / 2.0]
+        )
+
+        rotation_matrix = cTo_matrix_ros[:3, :3]
+        rpy_matrix = QuaternionAngle.euler_from_rotation_matrix(rotation_matrix)
+        quaternion_matrix = QuaternionAngle.quaternion_from_euler(*rpy_matrix)
+
+        bbox_3d = BoundingBox3D(
+            # id=object_id,
+            cls=cls,  # black
+            conf=result["score"],
+            pose=Pose(
+                position=Point(**dict(zip(["x", "y", "z"], translation_matrix))),
+                orientation=Quaternion(
+                    **dict(zip(["x", "y", "z", "w"], quaternion_matrix))
+                ),
+            ),
+            scale=Vector3(
+                x=self.obj_bounds[label]["x"],
+                y=self.obj_bounds[label]["z"],
+                z=self.obj_bounds[label]["y"],
+            ),
+        )
+
+        return bbox_3d
 
 
 def main():
