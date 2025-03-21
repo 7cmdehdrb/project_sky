@@ -17,6 +17,8 @@ from custom_msgs.msg import BoundingBox, BoundingBoxMultiArray
 from tf2_ros import *
 
 # Python
+import os
+import sys
 import numpy as np
 import json
 from PIL import ImageEnhance
@@ -35,10 +37,14 @@ from ultralytics import YOLO
 class RealTimeSegmentationNode(Node):
     def __init__(
         self,
-        model_path: str = None,
         camera_topic: str = "/camera/camera1/color/image_raw",
     ):
         super().__init__("real_time_segmentation_node")
+
+        resource_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resource"
+        )
+        model_path = os.path.join(resource_path, "best_hg.pt")
 
         # Load YOLO v11 Model
         self.model = YOLO(model_path, verbose=False)
@@ -91,7 +97,7 @@ class RealTimeSegmentationNode(Node):
             14: (0, 0, 0),  # Black
         }
         self.do_adjust_color = False
-        self.do_crop_image = True
+        self.do_crop_image = False
         self.do_publish_segmented_image = True
 
     def image_callback(self, msg: Image):
@@ -238,8 +244,7 @@ class RealTimeSegmentationNode(Node):
 def main(args=None):
     rclpy.init(args=args)
 
-    model_path = "/home/min/7cmdehdrb/ros2_ws/src/object_tracker/resource/best.pt"
-    node = RealTimeSegmentationNode(model_path=model_path)
+    node = RealTimeSegmentationNode()
 
     rclpy.spin(node=node)
 

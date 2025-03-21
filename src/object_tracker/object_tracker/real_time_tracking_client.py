@@ -84,11 +84,6 @@ class MegaPoseClient:
         ]
         int_temp = [int(i) for i in temp]
 
-        # self.initial_data = {
-        #     "detections": [[260.0, 110.0, 350.0, 343.0]],
-        #     "labels": ["yello_smoothie"],
-        #     "use_depth": False,
-        # }
         self.initial_data = {
             "detections": [int_temp],
             "labels": ["smoothie"],
@@ -136,7 +131,6 @@ class MegaPoseClient:
         self.node.get_logger().info(f"dt: {round(dt, 3)}, FPS: {round(1 / dt, 1)}")
 
         cto, score, bbox = self.send_pose_request(
-            self.socket,
             frame,
             (self.initial_data if not self.is_segmentation_valid else self.loop_data),
         )
@@ -204,9 +198,7 @@ class MegaPoseClient:
         length = struct.unpack(">I", buffer.read(4))[0]
         return buffer.read(length).decode("utf-8")
 
-    def send_pose_request(
-        self, sock: socket.socket, image: np.ndarray, json_data: dict
-    ):
+    def send_pose_request(self, image: np.ndarray, json_data: dict):
         # **(1) RGB 이미지를 전송할 수 있도록 BGR → RGB 변환**
         if image.shape[-1] == 3:
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -224,29 +216,23 @@ class MegaPoseClient:
         data = img_shape_bytes + img_bytes + json_bytes
 
         # **(5) 서버에 데이터 전송**
-        self.send_message(sock, MegaPoseClient.ServerMessage.GET_POSE, data)
+        self.send_message(self.socket, MegaPoseClient.ServerMessage.GET_POSE, data)
 
         # **(6) 서버 응답 수신**
-        code, response_buffer = self.receive_message(sock)
+        code, response_buffer = self.receive_message(self.socket)
         if code == MegaPoseClient.ServerMessage.RET_POSE:
             json_str = self.read_string(response_buffer)
             decoded_json = json.loads(json_str)
 
-            if len(decoded_json) == 1:
-                data = decoded_json[0]
-
-                cto = np.array(data["cTo"])
-                score = data["score"]
-                bbox = data["boundingBox"]
-
-                return cto, score, bbox
+            if len(decoded_json) > 0:
+                return decoded_json
 
         elif code == MegaPoseClient.ServerMessage.ERR:
             print("Error from server:", self.read_string(response_buffer))
         else:
             print("Unknown response code:", code)
 
-        return None, None, None
+        return None
 
     def send_intrinsics_request(
         self, sock: socket.socket, K: np.ndarray, image_size: tuple

@@ -2,6 +2,11 @@
 
 This project consists of multiple ROS packages that support various functionalities, including utility functions, custom messages, neural network inference, and object tracking.
 
+
+```bash
+sudo apt install ros-humble-ros2-control ros-humble-controller-manager
+```
+
 ## Packages
 
 ### 1. `base_package`

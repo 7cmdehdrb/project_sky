@@ -11,13 +11,20 @@ find_package(ament_cmake REQUIRED)
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/BoundingBox.msg"
   "msg/BoundingBoxMultiArray.msg"
+  "msg/BoundingBox3D.msg"
+  "msg/BoundingBox3DMultiArray.msg"
   "srv/FCNRequest.srv"
   "srv/FCNOccupiedRequest.srv"
+  "srv/MegaposeRequest.srv"
+  DEPENDENCIES geometry_msgs std_msgs nav_msgs
 )
 
 if(BUILD_TESTING)
