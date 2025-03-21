@@ -38,6 +38,7 @@ import time
 # Custom
 from object_tracker.real_time_tracking_client import MegaPoseClient
 from base_package.header import QuaternionAngle
+from object_tracker.real_time_segmentation import RealTimeSegmentationNode
 
 
 class MegaPoseEstimator(MegaPoseClient):
@@ -91,8 +92,10 @@ class MegaPoseEstimator(MegaPoseClient):
             #     list(map(int, [352.0, 261.0, 404.0, 392.0])),
             #     list(map(int, [475.0, 234.0, 514.0, 359.0])),
             # ],
-            "labels": ["alive"],
-            "detections": [list(map(int, [352.0, 261.0, 404.0, 392.0]))],
+            # "labels": ["alive"],
+            # "detections": [list(map(int, [352.0, 261.0, 404.0, 392.0]))],
+            "labels": [],
+            "detections": [],
             "use_depth": False,
         }
         self.enable_objects = []
@@ -101,6 +104,7 @@ class MegaPoseEstimator(MegaPoseClient):
             response = self.send_list_objects_request(self.socket)
             if response is not None:
                 self.enable_objects = response
+                self.node.get_logger().info(f"Enable Objects: {self.enable_objects}")
                 break
 
     def set_intrinsics(self, K: np.ndarray, image_size: tuple):
@@ -149,19 +153,28 @@ class MegaPoseEstimator(MegaPoseClient):
         K = np.array(msg.k).reshape(3, 3)
         image_size = (msg.height, msg.width)
 
-        if msg.height == 720 and msg.width == 1280:
-            image_size = (self.height, self.width)
-
-            offset = int((msg.width - self.width) // 2)
-
-            K[0, 0] = K[0, 0] * (self.width / msg.width)
-            K[1, 1] = K[1, 1] * (self.height / msg.height)
-            K[0, 2] = (K[0, 2] - offset) * (self.width / msg.width)
-            K[1, 2] = K[1, 2] * (self.height / msg.height)
-
-        elif msg.height == self.height and msg.width == self.width:
+        if msg.height == self.height and msg.width == self.width:
             # Do nothing
             pass
+
+        elif msg.height == 720 and msg.width == 1280:
+            image_size = (self.height, self.width)
+
+            h, w = 720, 1280
+            crop_w, crop_h = 640, 480
+            start_x = int((w - crop_w) // 2.05)
+            start_y = int((h - crop_h) // 2.7)
+
+            # offset = int((msg.width - self.width) // 2)
+
+            # K[0, 0] = K[0, 0] * (self.width / msg.width)
+            # K[1, 1] = K[1, 1] * (self.height / msg.height)
+            # K[0, 2] = (K[0, 2] - offset) * (self.width / msg.width)
+            # K[1, 2] = K[1, 2] * (self.height / msg.height)
+
+            K = K.copy()
+            K[0, 2] -= start_x
+            K[1, 2] -= start_y
 
         else:
             # Prevent setting intrinsics
@@ -172,6 +185,8 @@ class MegaPoseEstimator(MegaPoseClient):
             K=K,
             image_size=image_size,
         )
+
+        print(image_size)
         self.intrinsics_flag = True
 
 
@@ -217,6 +232,7 @@ class ObjectPoseEstimator(Node):
             return response
 
         np_image = self.bridge.imgmsg_to_cv2(self.image, desired_encoding="bgr8")
+        np_image = RealTimeSegmentationNode.crop_image(np_image)
 
         results = self.tracking_client.send_pose_request(
             image=np_image, json_data=self.tracking_client.detected_data
@@ -262,6 +278,10 @@ class ObjectPoseEstimator(Node):
                 ),
             )
             response_msg.data.append(bbox_3d)
+
+        self.get_logger().info(
+            f"Megapose returns {len(results)} objects and publish {len(response_msg.data)} objects."
+        )
 
         response.response = response_msg
 

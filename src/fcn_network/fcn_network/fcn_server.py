@@ -96,9 +96,9 @@ class FCNServerNode(Node):
         self.filtered_state_dict = {
             k: v for k, v in self.state_dict.items() if "aux_classifier" not in k
         }
-        
+
         self.gain = 2.0
-        
+
         self.model.eval()
         self.model.load_state_dict(self.filtered_state_dict, strict=False)
         self.model = self.model.to(self.device)
@@ -267,9 +267,11 @@ class FCNServerNode(Node):
         return response
 
     def post_process_results(self, results: np.ndarray, weights: list) -> np.ndarray:
-        
-        normalized_results = results * np.exp(-self.gain * (1 - results))  # 지수 함수로 가중치 적용
-        
+
+        normalized_results = results * np.exp(
+            -self.gain * (1 - results)
+        )  # 지수 함수로 가중치 적용
+
         data = np.sum(normalized_results, axis=0)
 
         num_peaks = len(self.grid_data["columns"])
@@ -300,7 +302,7 @@ class FCNServerNode(Node):
 
         if not (res2 > (num_peaks - 1)):
             res.append(res2)
-            
+
         print(max_peak_idx)
         print(top_peak_datas)
 

@@ -72,8 +72,12 @@ class RealTimeSegmentationNode(Node):
         self.image = None
 
         # Parameters
+        resource_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "resource"
+        )
+
         with open(
-            "/home/min/7cmdehdrb/ros2_ws/src/object_tracker/resource/sim_stats.json",
+            os.path.join(resource_dir, "sim_stats.json"),
             "r",
         ) as f:
             self.stat = json.load(f)
@@ -97,7 +101,7 @@ class RealTimeSegmentationNode(Node):
             14: (0, 0, 0),  # Black
         }
         self.do_adjust_color = False
-        self.do_crop_image = False
+        self.do_crop_image = True
         self.do_publish_segmented_image = True
 
     def image_callback(self, msg: Image):
