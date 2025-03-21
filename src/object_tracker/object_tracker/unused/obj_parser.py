@@ -44,8 +44,8 @@ for folder in folders:
     bounds = get_obj_bounds(obj_file)
     result[folder] = {
         "x": abs(bounds["max_x"] - bounds["min_x"]),
-        "y": abs(bounds["max_z"] - bounds["min_z"]),
-        "z": abs(bounds["max_y"] - bounds["min_y"]),
+        "y": abs(bounds["max_y"] - bounds["min_y"]),
+        "z": abs(bounds["max_z"] - bounds["min_z"]),
     }
 
 with open("obj_bounds.json", "w") as f:
