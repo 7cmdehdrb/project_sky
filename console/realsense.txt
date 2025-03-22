@@ -20,3 +20,6 @@ ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" rgb_camera.col
 
 
 ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.enable:=true enable_gyro:=true enable_accel:=true rgb_camera.enable_auto_exposure:=false rgb_camera.exposure:="100"
+
+
+ros2 run tf2_ros static_transform_publisher -0.5 0.0 0.5 0.0 0.0 0.0 1.0 world camera1_link

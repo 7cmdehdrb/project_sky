@@ -331,7 +331,7 @@ class MoveitClient(object):
         )
 
         self.execute_trajectory_action_client = ActionClient(
-            self, ExecuteTrajectory, "/execute_trajectory"
+            self._node, ExecuteTrajectory, "/execute_trajectory"
         )
         # <<< Service Clients <<<
 
@@ -342,7 +342,7 @@ class MoveitClient(object):
     # >>> Main Loop >>>
     def run(self):
         header = Header(
-            stamp=self.get_clock().now().to_msg(),
+            stamp=self._node.get_clock().now().to_msg(),
             frame_id="base_link",
         )
 
@@ -406,25 +406,41 @@ class MoveitClient(object):
 
     # <<< Main Loop <<<
     def feedback_callback(self, feedback_msg):
-        self.get_logger().info(f"Received feedback: {feedback_msg}")
+        pass
+        # self._node.get_logger().info(f"Received feedback: {feedback_msg}")
+
+    def execute_trajectory(self, trajectory: RobotTrajectory):
+        goal_msg = ExecuteTrajectory.Goal(trajectory=trajectory)
+        self.execute_trajectory_action_client.wait_for_server()
+
+        response = self.execute_trajectory_action_client.send_goal(
+            goal_msg, feedback_callback=self.feedback_callback
+        )
+        return response
+        # response.add_done_callback(self.goal_response_callback)
+
+        # return response
 
     def goal_response_callback(self, future):
         goal_handle = future.result()
         if not goal_handle.accepted:
-            self.get_logger().info("Goal rejected.")
+            self._node.get_logger().info("Goal rejected.")
             return
 
-        self.get_logger().info("Goal accepted, waiting for result...")
+        self._node.get_logger().info("Goal accepted, waiting for result...")
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self.result_callback)
 
     def result_callback(self, future):
         result = future.result().result
-        self.get_logger().info(f"Result received: {result}")
+        # self._node.get_logger().info(f"Result received: {result}")
 
     # >>> Handle Responses >>>
     def handle_cartesian_path_response(
-        self, response: GetCartesianPath.Response, header: Header
+        self,
+        response: GetCartesianPath.Response,
+        header: Header,
+        fraction_threshold: float,
     ) -> Path:
         code = response.error_code.val
         if code != MoveItErrorCodes.SUCCESS:
@@ -432,13 +448,15 @@ class MoveitClient(object):
             self._node.get_logger().warn(
                 f"Error code in compute_cartesian_path service: {code}/{code_type}"
             )
-            return None, None
+            return None
 
         trajectory: RobotTrajectory = response.solution
         fraction = response.fraction
 
-        if fraction < 1.0:
-            self._node.get_logger().warn(f"Fraction is not 1.0: {fraction}")
+        if fraction < fraction_threshold:
+            self._node.get_logger().warn(
+                f"Fraction is under {fraction_threshold}: {fraction}"
+            )
             return None
 
         eef_path: Path = self._fk.parse_robot_trajectory_to_path(
@@ -446,7 +464,7 @@ class MoveitClient(object):
         )
         self.end_effector_path_publisher.publish(eef_path)
 
-        return eef_path, trajectory
+        return trajectory
 
     def handle_compute_fk_response(
         self, response: GetPositionFK.Response
@@ -503,7 +521,7 @@ class MoveitClient(object):
             f"Planning time: {planning_time}, Path length: {len(path.poses)}"
         )
 
-        return path
+        return trajectory
 
     # <<< Handle Responses >>><<<
 
@@ -532,7 +550,7 @@ class MoveitClient(object):
         request = GetCartesianPath.Request(
             header=header,
             start_state=RobotState(joint_state=self._joint_states),
-            group_name="manipulator",
+            group_name="ur_manipulator",
             link_name="wrist_3_link",
             waypoints=waypoints,
             max_step=0.05,
@@ -551,7 +569,7 @@ class MoveitClient(object):
 
         request = GetPositionFK.Request(
             header=Header(
-                stamp=self.get_clock().now().to_msg(),
+                stamp=self._node.get_clock().now().to_msg(),
                 frame_id="base_link",
             ),
             fk_link_names=["tool0"],
@@ -569,7 +587,7 @@ class MoveitClient(object):
 
         request = GetPositionIK.Request(
             ik_request=PositionIKRequest(
-                group_name="manipulator",
+                group_name="ur_manipulator",
                 robot_state=RobotState(joint_state=self._joint_states),
                 avoid_collisions=True,
                 ik_link_name="wrist_3_link",
@@ -602,11 +620,11 @@ class MoveitClient(object):
             motion_plan_request=MotionPlanRequest(
                 start_state=RobotState(joint_state=self._joint_states),
                 goal_constraints=goal_constraints,
-                group_name="manipulator",
-                num_planning_attempts=30,
-                allowed_planning_time=5.0,
-                max_velocity_scaling_factor=0.5,
-                max_acceleration_scaling_factor=0.5,
+                group_name="ur_manipulator",
+                num_planning_attempts=300,
+                allowed_planning_time=10.0,
+                max_velocity_scaling_factor=1.0,
+                max_acceleration_scaling_factor=1.0,
                 # cartesian_speed_limited_link="wrist_3_link",
                 # max_cartesian_speed=0.1,
             )
@@ -631,7 +649,7 @@ class MoveitClient(object):
 
     # >>> Methods >>>
     def get_goal_constraint(
-        self, pose_stamped: PoseStamped, orientation_constraints=None
+        self, pose_stamped: PoseStamped, orientation_constraints=None, tolerance=0.1
     ):
         ik_response: GetPositionIK.Response = self.compute_ik(pose_stamped=pose_stamped)
 
@@ -656,8 +674,8 @@ class MoveitClient(object):
                 joint_name=n,
                 position=p,
                 weight=0.1,
-                tolerance_above=0.1,
-                tolerance_below=0.1,
+                tolerance_above=tolerance,
+                tolerance_below=tolerance,
             )
             joint_constraints.append(joint_constraint)
 
@@ -821,7 +839,7 @@ def main():
 
     try:
         while rclpy.ok():
-            node.run()
+            client.run()
             rate.sleep()
     except KeyboardInterrupt:
         pass
