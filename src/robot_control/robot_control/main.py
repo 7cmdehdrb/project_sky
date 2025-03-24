@@ -15,6 +15,7 @@ from custom_msgs.msg import *
 from moveit_msgs.msg import *
 from trajectory_msgs.msg import *
 from moveit_msgs.srv import *
+from shape_msgs.msg import *
 from builtin_interfaces.msg import Duration as BuiltinDuration
 
 # TF
@@ -27,14 +28,19 @@ from enum import Enum
 # custom
 from base_package.header import QuaternionAngle
 from robot_control.ur5e_control import MoveitClient
+from robot_control.gripper_action import GripperActionClient
 from object_tracker.object_pose_estimator_client import MegaPoseClient
 
 
 class State(Enum):
-    GRASPING_AIM = 0
-    GRASPING = 1
-    HOME_AIM = 2
-    HOME = 3
+    WAITING = -1
+    FCN_SEARCHING = 0
+    TARGET_AIMING = 1
+    TARGET_POSITIONING = 2
+    GRASPING = 3
+    HOME_AIMING = 4
+    HOME_POSITIONING = 5
+    UNGRASPING = 6
 
 
 class MainControlNode(object):
@@ -42,19 +48,19 @@ class MainControlNode(object):
         self._node = node
 
         self._moveit_client = MoveitClient(node=self._node)
+        self._gripper_client = GripperActionClient(node=self._node)
         # self._megapose_client = MegaPoseClient(node=self._node)
-        self.state = State.GRASPING_AIM
+        self.state = State.WAITING
+
+        self.home_pose = None
+        self.end_effector = "gripper_link"
+        self.target_obects: BoundingBox3DMultiArray = None
 
         self.test = self._node.create_publisher(
             PoseStamped,
             "test",
             qos_profile=qos_profile_system_default,
         )
-
-        self.home = None
-        self.idx = 0
-
-        self._node.get_logger().info("Home Pose: {}".format(self.home))
 
     def initialize(self):
         self._moveit_client.initialize_world()
@@ -65,7 +71,7 @@ class MainControlNode(object):
         box = BoundingBox3D()
         box.cls = "test1"
         box.pose = Pose(
-            position=Point(x=1.0, y=0.0, z=0.2),
+            position=Point(x=0.85, y=0.0, z=0.2),
             orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
         )
         box.scale = Vector3(x=0.05, y=0.05, z=0.12)
@@ -74,183 +80,247 @@ class MainControlNode(object):
         box = BoundingBox3D()
         box.cls = "test2"
         box.pose = Pose(
-            position=Point(x=0.9, y=0.15, z=0.2),
+            position=Point(x=0.75, y=0.15, z=0.2),
             orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
         )
         box.scale = Vector3(x=0.05, y=0.05, z=0.12)
-        result.data.append(box)
+        # result.data.append(box)
 
         box = BoundingBox3D()
         box.cls = "test3"
         box.pose = Pose(
-            position=Point(x=0.9, y=-0.15, z=0.2),
+            position=Point(x=0.75, y=-0.15, z=0.2),
             orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
         )
         box.scale = Vector3(x=0.05, y=0.05, z=0.12)
-        result.data.append(box)
+        # result.data.append(box)
 
         return result
 
     def run(self):
-        # Get All Object Poses
-        # object_poses: BoundingBox3DMultiArray = (
-        #     self._megapose_client.send_megapose_request()
-        # )
-        # if len(object_poses.data) == 0:
-        #     self._node.get_logger().warn("No object detected.")
-        #     return None
-
-        if self.home is None:
-            fk_response: GetPositionFK.Response = self._moveit_client.compute_fk()
-            if fk_response is not None:
-                self.home = self._moveit_client.handle_compute_fk_response(
-                    response=fk_response
-                ).pose
-            self._node.get_logger().info("Home Pose: {}".format(self.home))
-            return False
-
-        self._node.get_logger().info(f"Running State: {self.state}")
-
-        object_poses = self.get_test_data()
-
-        # # Update Planning Scene
-        collision_objects = self.collision_object_from_bbox_3d(bbox_3d=object_poses)
-
-        self._moveit_client.apply_planning_scene(collision_objects=collision_objects)
-
-        # Plan to Target
-        target: BoundingBox3D = object_poses.data[self.idx]
-        target_pose = Pose(
-            position=Point(
-                x=target.pose.position.x - (target.scale.x / 2.0) - 0.12,
-                y=target.pose.position.y,
-                z=target.pose.position.z,
-            ),
-            orientation=Quaternion(x=0.5, y=-0.5, z=0.5, w=-0.5),
-        )
-
         header = Header(
             stamp=self._node.get_clock().now().to_msg(), frame_id="base_link"
         )
+        self._node.get_logger().info(f"Running State: {self.state}")
 
-        self.test.publish(PoseStamped(header=header, pose=target_pose))
-
-        # True: Cartesian Path, False: Kinematic Path
-        planning_method = False
-
-        if planning_method:
-            self._node.get_logger().info("Cartesian Path")
-
-            cartesian_path_response: GetCartesianPath.Response = (
-                self._moveit_client.compute_cartesian_path(
-                    header=header,
-                    waypoints=[target_pose],
-                )
-            )
-
-            if cartesian_path_response is not None:
-                cartesian_path: RobotTrajectory = (
-                    self._moveit_client.handle_cartesian_path_response(
-                        header=header,
-                        response=cartesian_path_response,
-                        fraction_threshold=1.0,
-                    )
-                )
-
-                if cartesian_path is not None:
-                    scaled_trajectory = MainControlNode.scale_trajectory(
-                        scale_factor=0.5, trajectory=cartesian_path
-                    )
-                    self._moveit_client.execute_trajectory(trajectory=scaled_trajectory)
-                    print("Cartesian Path Executed.")
-                    return False
-
-        else:
-            if self.state == State.GRASPING_AIM:
-                temperal_target_pose = target_pose
-                temperal_target_pose.position.x -= 0.1
-
-            elif self.state == State.GRASPING:
-                temperal_target_pose = target_pose
-
-            elif self.state == State.HOME_AIM:
-                temperal_target_pose = target_pose
-                temperal_target_pose.position.x -= 0.2
-
-            elif self.state == State.HOME:
-                temperal_target_pose = self.home
-
-            if self.state == State.GRASPING_AIM or self.state == State.HOME_AIM:
-                tol = 0.05
+        if self.state == State.WAITING:
+            if self.waiting():
+                self.state = State.FCN_SEARCHING
+                return True
             else:
-                tol = 0.02
-
-            goal_constrain = self._moveit_client.get_goal_constraint(
-                pose_stamped=PoseStamped(header=header, pose=temperal_target_pose),
-                orientation_constraints=None,
-                tolerance=tol,
-            )
-            if goal_constrain is None:
-                self._node.get_logger().warn("Goal Constrain is None.")
+                self._node.get_logger().warn("Error in Waiting. Home Pose Not Set.")
                 return False
 
-            if goal_constrain is not None:
-                kinematic_path_response: GetMotionPlan.Response = (
-                    self._moveit_client.plan_kinematic_path(
-                        goal_constraints=[goal_constrain]
-                    )
+        elif self.state == State.FCN_SEARCHING:
+            self.target_obects = self.fcn_searching()
+            if self.target_obects is not None:
+                self.state = State.TARGET_AIMING
+            else:
+                self._node.get_logger().warn("Error in FCN Searching. No Object Found.")
+                return False
+
+        elif (
+            self.state == State.TARGET_AIMING
+            or self.state == State.TARGET_POSITIONING
+            or self.state == State.HOME_AIMING
+            or self.state == State.HOME_POSITIONING
+        ):
+            # TODO: Replace with Real Data
+            orientation = Quaternion(x=0.5, y=0.5, z=0.5, w=0.5)
+            target: BoundingBox3D = self.target_obects.data[0]
+            scale_factor = 0.5
+            tolerance = 0.05
+
+            if self.state == State.TARGET_AIMING:
+                target_pose = Pose(
+                    position=Point(
+                        x=target.pose.position.x - 0.2,
+                        y=target.pose.position.y,
+                        z=target.pose.position.z,
+                    ),
+                    orientation=orientation,
                 )
+                tolerance = 0.05
 
-                if kinematic_path_response is None:
-                    self._node.get_logger().warn("Kinematic Path Response is None.")
-                    return False
+            elif self.state == State.TARGET_POSITIONING:
+                target_pose = Pose(
+                    position=target.pose.position,
+                    orientation=orientation,
+                )
+                tolerance = 0.01
 
-                if kinematic_path_response is not None:
-                    kinematic_path: RobotTrajectory = (
-                        self._moveit_client.handle_plan_kinematic_path_response(
-                            header=header, response=kinematic_path_response
-                        )
-                    )
+            elif self.state == State.HOME_AIMING:
+                target_pose = Pose(
+                    position=Point(
+                        x=target.pose.position.x - 0.2,
+                        y=target.pose.position.y,
+                        z=target.pose.position.z,
+                    ),
+                    orientation=orientation,
+                )
+                tolerance = 0.01
 
-                    if kinematic_path is None:
-                        self._node.get_logger().warn("Kinematic Path is None.")
-                        return False
+            elif self.state == State.HOME_POSITIONING:
+                target_pose = Pose(
+                    position=self.home_pose.position,
+                    orientation=orientation,
+                )
+                tolerance = 0.05
 
-                    if kinematic_path is not None:
-                        scaled_trajectory = MainControlNode.scale_trajectory(
-                            scale_factor=0.5, trajectory=kinematic_path
-                        )
-                        self._moveit_client.execute_trajectory(
-                            trajectory=scaled_trajectory
-                        )
-                        print("Kinematic Path Executed.")
+            self.test.publish(PoseStamped(header=header, pose=target_pose))
 
-                        if self.state == State.GRASPING_AIM:
-                            self.state = State.GRASPING
+            if self.control(
+                header=header,
+                target_pose=target_pose,
+                scale_factor=scale_factor,
+                tolerance=tolerance,
+            ):
+                self.state = State(self.state.value + 1)
+            else:
+                self._node.get_logger().warn("Error in Path Planning. Control Failed.")
+                return False
 
-                        elif self.state == State.GRASPING:
-                            self.state = State.HOME_AIM
+        elif self.state == State.GRASPING:
+            # self.grasping(open=True)
+            self.state = State.HOME_AIMING
 
-                        elif self.state == State.HOME_AIM:
-                            self.state = State.HOME
+        elif self.state == State.UNGRASPING:
+            # self.grasping(open=False)
+            self.state = State.FCN_SEARCHING
 
-                        elif self.state == State.HOME:
-                            self.state = State.GRASPING_AIM
-                            self.idx += 1
-                            if self.idx >= 3:
-                                self.idx = 0
+        else:
+            self._node.get_logger().warn("Invalid State.")
+            return False
 
-                            self._moveit_client.initialize_world()
+        return True
 
-                        return False
+    # >>> Methods for Each State
+    def waiting(self):
+        """
+        Initialize Home Pose. Return True if Home Pose is set.
+        """
+        if self.home_pose is None:
+            fk_response: GetPositionFK.Response = self._moveit_client.compute_fk(
+                end_effector=self.end_effector
+            )
+            if fk_response is not None:
+                self.home_pose = self._moveit_client.handle_compute_fk_response(
+                    response=fk_response
+                ).pose
+
+                self._node.get_logger().info(
+                    "Setting Home Pose: {}".format(self.home_pose)
+                )
+                return True
 
         return False
 
-    def collision_object_from_bbox_3d(self, bbox_3d: BoundingBox3DMultiArray) -> list:
-        header = Header(
-            stamp=self._node.get_clock().now().to_msg(),
-            frame_id="base_link",
+    def fcn_searching(self):
+        self.initialize()
+
+        # TODO: Replace with Real Data
+        # Get All Object Poses
+        # bbox_3d: BoundingBox3DMultiArray = (
+        #     self._megapose_client.send_megapose_request()
+        # )
+
+        bbox_3d = self.get_test_data()
+        if len(bbox_3d.data) == 0:
+            self._node.get_logger().warn("No object detected.")
+            return None
+
+        # # Update Planning Scene
+        collision_objects = self.collision_object_from_bbox_3d(
+            header=Header(
+                stamp=self._node.get_clock().now().to_msg(), frame_id="base_link"
+            ),
+            bbox_3d=bbox_3d,
         )
+        self._moveit_client.apply_planning_scene(collision_objects=collision_objects)
+
+        return bbox_3d
+
+    def grasping(self, open: bool = True):
+        self._gripper_client.control_gripper(open=open)
+
+    def control(
+        self, header: Header, target_pose: Pose, tolerance: float, scale_factor: float
+    ):
+        goal_constraints = self._moveit_client.get_goal_constraint(
+            pose_stamped=PoseStamped(header=header, pose=target_pose),
+            orientation_constraints=None,
+            tolerance=tolerance,
+            end_effector=self.end_effector,
+        )
+        path_constraint = Constraints(
+            name="path_constraint",
+            # position_constraints=[
+            #     PositionConstraint(
+            #         header=header,
+            #         link_name=self.end_effector,
+            #         # target_point_offset=Vector3(x=0.0, y=0.0, z=0.0),
+            #         constraint_region=BoundingVolume(
+            #             primitives=[
+            #                 SolidPrimitive(
+            #                     type=SolidPrimitive.BOX,
+            #                     dimensions=[2.0, 1.0, 1.0],
+            #                 )
+            #             ],
+            #             primitive_poses=[
+            #                 Pose(
+            #                     position=Point(x=1.0, y=0.5, z=0.5),
+            #                     orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            #                 )
+            #             ],
+            #             # meshes=[Mesh()],
+            #             # mesh_poses=[Pose()],
+            #         ),
+            #         weight=1.0,
+            #     )
+            # ],
+            orientation_constraints=[
+                OrientationConstraint(
+                    header=header,
+                    link_name=self.end_effector,
+                    orientation=self.home_pose.orientation,
+                    absolute_x_axis_tolerance=0.1,
+                    absolute_y_axis_tolerance=0.1,
+                    absolute_z_axis_tolerance=0.1,
+                    weight=1.0,
+                )
+            ],
+        )
+
+        if goal_constraints is not None:
+            kinematic_path_response: GetMotionPlan.Response = (
+                self._moveit_client.plan_kinematic_path(
+                    goal_constraints=[goal_constraints],
+                    path_constraints=None,
+                )
+            )
+
+            if kinematic_path_response is not None:
+                kinematic_path: RobotTrajectory = (
+                    self._moveit_client.handle_plan_kinematic_path_response(
+                        header=header, response=kinematic_path_response
+                    )
+                )
+
+                if kinematic_path is not None:
+                    scaled_trajectory = MainControlNode.scale_trajectory(
+                        scale_factor=scale_factor, trajectory=kinematic_path
+                    )
+                    self._moveit_client.execute_trajectory(trajectory=scaled_trajectory)
+                    return True
+
+        return False
+
+    # <<< Methods for Each State
+
+    @staticmethod
+    def collision_object_from_bbox_3d(
+        header: Header, bbox_3d: BoundingBox3DMultiArray
+    ) -> list:
         collision_objects = []
 
         for bbox in bbox_3d.data:
@@ -319,19 +389,14 @@ def main():
     thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
     thread.start()
 
-    hz = 0.5
+    hz = 1.0
     rate = node.create_rate(hz)
 
     main_node.initialize()
 
-    flag = False
-
-    # main_node.run()
-
     try:
         while rclpy.ok():
-            if not flag:
-                flag = main_node.run()
+            main_node.run()
 
             rate.sleep()
     except KeyboardInterrupt:

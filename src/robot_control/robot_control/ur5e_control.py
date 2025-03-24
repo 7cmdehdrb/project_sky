@@ -346,35 +346,7 @@ class MoveitClient(object):
             frame_id="base_link",
         )
 
-        # collision_object: CollisionObject = MoveitClient.create_collision_object(
-        #     id="box",
-        #     header=header,
-        #     pose=Pose(
-        #         position=Point(x=0.5, y=0.5, z=0.5),
-        #         orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-        #     ),
-        #     scale=Vector3(x=0.1, y=0.1, z=0.1),
-        #     operation=CollisionObject.ADD,
-        # )
-
-        # self.apply_planning_scene(collision_objects=[collision_object])
-
-        orientation = Quaternion(
-            x=2.00307048711234e-16,
-            y=0.7071067812590626,
-            z=0.7071067811140325,
-            w=-4.329780280011333e-17,
-        )
-        pose = Pose(
-            position=Point(x=0.4, y=0.4, z=0.163),
-            orientation=orientation,
-        )
-
-        waypoints = [pose]
-
-        compute_fk_response = self.compute_fk()
-        if compute_fk_response is not None:
-            pose_stamped = self.handle_compute_fk_response(compute_fk_response)
+        return True
 
         flag = True
 
@@ -405,9 +377,9 @@ class MoveitClient(object):
                 )
 
     # <<< Main Loop <<<
-    def feedback_callback(self, feedback_msg):
-        pass
+    def feedback_callback(self, feedback_msg: ExecuteTrajectory.Feedback):
         # self._node.get_logger().info(f"Received feedback: {feedback_msg}")
+        pass
 
     def execute_trajectory(self, trajectory: RobotTrajectory):
         goal_msg = ExecuteTrajectory.Goal(trajectory=trajectory)
@@ -417,23 +389,6 @@ class MoveitClient(object):
             goal_msg, feedback_callback=self.feedback_callback
         )
         return response
-        # response.add_done_callback(self.goal_response_callback)
-
-        # return response
-
-    def goal_response_callback(self, future):
-        goal_handle = future.result()
-        if not goal_handle.accepted:
-            self._node.get_logger().info("Goal rejected.")
-            return
-
-        self._node.get_logger().info("Goal accepted, waiting for result...")
-        result_future = goal_handle.get_result_async()
-        result_future.add_done_callback(self.result_callback)
-
-    def result_callback(self, future):
-        result = future.result().result
-        # self._node.get_logger().info(f"Result received: {result}")
 
     # >>> Handle Responses >>>
     def handle_cartesian_path_response(
@@ -542,7 +497,9 @@ class MoveitClient(object):
 
         return res
 
-    def compute_cartesian_path(self, header: Header, waypoints: list):
+    def compute_cartesian_path(
+        self, header: Header, waypoints: list, end_effector: str = "wrist_3_link"
+    ):
         # Exception handling
         if self._joint_states is None:
             return None
@@ -551,7 +508,7 @@ class MoveitClient(object):
             header=header,
             start_state=RobotState(joint_state=self._joint_states),
             group_name="ur_manipulator",
-            link_name="wrist_3_link",
+            link_name=end_effector,
             waypoints=waypoints,
             max_step=0.05,
             jump_threshold=5.0,
@@ -562,7 +519,7 @@ class MoveitClient(object):
 
         return res
 
-    def compute_fk(self):
+    def compute_fk(self, end_effector: str = "wrist_3_link"):
         # Exception handling
         if self._joint_states is None:
             return None
@@ -572,7 +529,7 @@ class MoveitClient(object):
                 stamp=self._node.get_clock().now().to_msg(),
                 frame_id="base_link",
             ),
-            fk_link_names=["tool0"],
+            fk_link_names=[end_effector],
             robot_state=RobotState(joint_state=self._joint_states),
         )
 
@@ -580,20 +537,21 @@ class MoveitClient(object):
 
         return response
 
-    def compute_ik(self, pose_stamped: PoseStamped):
+    def compute_ik(self, pose_stamped: PoseStamped, end_effector: str = "wrist_3_link"):
         # Exception handling
         if self._joint_states is None:
+            self._node.get_logger().warn("Joint states are not initialized.")
             return None
 
         request = GetPositionIK.Request(
             ik_request=PositionIKRequest(
                 group_name="ur_manipulator",
                 robot_state=RobotState(joint_state=self._joint_states),
-                avoid_collisions=True,
-                ik_link_name="wrist_3_link",
+                avoid_collisions=False,
+                ik_link_name=end_effector,
                 pose_stamped=pose_stamped,
-                ik_link_names=self._fk.link_order,
-                # constraints=Constraints(),
+                # ik_link_names=self._fk.link_order,
+                # attempts=300,
             )
         )
 
@@ -601,7 +559,9 @@ class MoveitClient(object):
 
         return res
 
-    def plan_kinematic_path(self, goal_constraints: list):
+    def plan_kinematic_path(
+        self, goal_constraints: list, path_constraints: Constraints = None
+    ):
         """
         Unused Parameters:
         - workspace_parameters
@@ -630,6 +590,9 @@ class MoveitClient(object):
             )
         )
 
+        if path_constraints is not None:
+            request.motion_plan_request.path_constraints = path_constraints
+
         res = self.plan_kinematic_path_client.send_request(request)
 
         return res
@@ -649,9 +612,15 @@ class MoveitClient(object):
 
     # >>> Methods >>>
     def get_goal_constraint(
-        self, pose_stamped: PoseStamped, orientation_constraints=None, tolerance=0.1
+        self,
+        pose_stamped: PoseStamped,
+        orientation_constraints=None,
+        tolerance=0.1,
+        end_effector: str = "wrist_3_link",
     ):
-        ik_response: GetPositionIK.Response = self.compute_ik(pose_stamped=pose_stamped)
+        ik_response: GetPositionIK.Response = self.compute_ik(
+            pose_stamped=pose_stamped, end_effector=end_effector
+        )
 
         if ik_response is None:
             return None
@@ -662,6 +631,7 @@ class MoveitClient(object):
             self._node.get_logger().warn(
                 f"Error code in compute_ik service: {code}/{code_type}"
             )
+            self._node.get_logger().warn(f"{ik_response.solution}")
             return None
 
         joint_state: JointState = ik_response.solution.joint_state
@@ -740,30 +710,22 @@ class MoveitClient(object):
 
     def initialize_world(self):
         self._node.get_logger().info("Initializing the planning scene...")
-        rate = 0.1
 
-        if self._planning_scene is None:
-            # Get the planning scene from the server
-            self._node.get_logger().info(
-                "Getting the planning scene from the server..."
-            )
+        response: GetPlanningScene.Response = self.get_planning_scene()
 
-            response: GetPlanningScene.Response = self.get_planning_scene()
-            scene = response.scene
+        scene = response.scene
 
-            # If the planning scene is initialized
-            if scene is not None:
-                self._planning_scene = scene
+        # If the planning scene is initialized
+        if scene is not None:
+            self._planning_scene = scene
 
-                self.reset_world()
+            self.reset_world()
 
-                self._node.get_logger().info("Planning scene is initialized.")
-                return True
+            self._node.get_logger().info("Planning scene is initialized.")
 
-        # If the planning scene is already initialized
-        else:
-            print("Planning scene is already initialized.")
             return True
+
+        return False
 
     # <<< Methods <<<
 
