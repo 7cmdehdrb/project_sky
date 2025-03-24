@@ -49,7 +49,7 @@ class MainControlNode(object):
 
         self._moveit_client = MoveitClient(node=self._node)
         self._gripper_client = GripperActionClient(node=self._node)
-        # self._megapose_client = MegaPoseClient(node=self._node)
+        self._megapose_client = MegaPoseClient(node=self._node)
         self.state = State.WAITING
 
         self.home_pose = None
@@ -218,13 +218,10 @@ class MainControlNode(object):
     def fcn_searching(self):
         self.initialize()
 
-        # TODO: Replace with Real Data
         # Get All Object Poses
-        # bbox_3d: BoundingBox3DMultiArray = (
-        #     self._megapose_client.send_megapose_request()
-        # )
+        bbox_3d: BoundingBox3DMultiArray = self._megapose_client.send_megapose_request()
+        # bbox_3d = self.get_test_data()
 
-        bbox_3d = self.get_test_data()
         if len(bbox_3d.data) == 0:
             self._node.get_logger().warn("No object detected.")
             return None
