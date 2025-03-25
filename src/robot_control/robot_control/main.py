@@ -17,6 +17,7 @@ from trajectory_msgs.msg import *
 from moveit_msgs.srv import *
 from shape_msgs.msg import *
 from builtin_interfaces.msg import Duration as BuiltinDuration
+from tf2_geometry_msgs.tf2_geometry_msgs import PoseStamped as TF2PoseStamped
 
 # TF
 from tf2_ros import *
@@ -35,12 +36,14 @@ from object_tracker.object_pose_estimator_client import MegaPoseClient
 class State(Enum):
     WAITING = -1
     FCN_SEARCHING = 0
-    TARGET_AIMING = 1
-    TARGET_POSITIONING = 2
-    GRASPING = 3
-    HOME_AIMING = 4
-    HOME_POSITIONING = 5
-    UNGRASPING = 6
+    GRASPING_POSITIONING = 1
+    TARGET_AIMING = 2
+    TARGET_POSITIONING = 3
+    GRASPING = 4
+    HOME_AIMING = 5
+    HOME_POSITIONING = 6
+    UNGRASPING = 7
+    FCN_POSITIONING = 8
 
 
 class MainControlNode(object):
@@ -52,15 +55,73 @@ class MainControlNode(object):
         self._megapose_client = MegaPoseClient(node=self._node)
         self.state = State.WAITING
 
+        self.tf_buffer = Buffer(node=self._node, cache_time=Duration(seconds=1))
+        self.tf_listener = TransformListener(
+            self.tf_buffer, self._node, qos=qos_profile_system_default
+        )
+
+        self.gripper_joint_subscriber = self._node.create_subscription(
+            JointState,
+            "/gripper/joint_states",
+            self.gripper_joint_callback,
+            qos_profile=qos_profile_system_default,
+        )
+        self.gripper_joint_states = None
+
         self.home_pose = None
         self.end_effector = "gripper_link"
         self.target_obects: BoundingBox3DMultiArray = None
 
+        self.home_joints = JointState(
+            name=[
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+                "shoulder_pan_joint",
+            ],
+            position=[
+                -0.853251652126648,
+                -2.4234585762023926,
+                -3.0269695721068324,
+                4.695071220397949,
+                3.1019468307495117,
+                -1.616389576588766,
+            ],
+        )
+        self.waiting_joints = JointState(
+            name=[
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+                "shoulder_pan_joint",
+            ],
+            position=[
+                -0.21154792726550298,
+                -1.1941368579864502,
+                -3.0269323788084925,
+                4.695095539093018,
+                3.101895332336426,
+                -0.006377998982564748,
+            ],
+        )
+
         self.test = self._node.create_publisher(
             PoseStamped,
-            "test",
+            self._node.get_name() + "test",
             qos_profile=qos_profile_system_default,
         )
+        self.target_publisher = self._node.create_publisher(
+            MarkerArray,
+            self._node.get_name() + "/target",
+            qos_profile=qos_profile_system_default,
+        )
+
+    def gripper_joint_callback(self, msg: JointState):
+        self.gripper_joint_states = msg
 
     def initialize(self):
         self._moveit_client.initialize_world()
@@ -114,10 +175,35 @@ class MainControlNode(object):
         elif self.state == State.FCN_SEARCHING:
             self.target_obects = self.fcn_searching()
             if self.target_obects is not None:
-                self.state = State.TARGET_AIMING
+                # self.state = State.TARGET_AIMING
+                self.state = State.GRASPING_POSITIONING
             else:
                 self._node.get_logger().warn("Error in FCN Searching. No Object Found.")
                 return False
+
+        elif (
+            self.state == State.GRASPING_POSITIONING
+            or self.state == State.FCN_POSITIONING
+        ):
+            if self.state == State.GRASPING_POSITIONING:
+                if self.control(
+                    header=header,
+                    target_pose=Pose(),
+                    scale_factor=0.2,
+                    tolerance=0.02,
+                    joint_states=self.home_joints,
+                ):
+                    self.state = State.TARGET_AIMING
+
+            elif self.state == State.FCN_POSITIONING:
+                if self.control(
+                    header=header,
+                    target_pose=Pose(),
+                    scale_factor=0.2,
+                    tolerance=0.02,
+                    joint_states=self.waiting_joints,
+                ):
+                    self.state = State.FCN_SEARCHING
 
         elif (
             self.state == State.TARGET_AIMING
@@ -128,42 +214,46 @@ class MainControlNode(object):
             # TODO: Replace with Real Data
             orientation = Quaternion(x=0.5, y=0.5, z=0.5, w=0.5)
             target: BoundingBox3D = self.target_obects.data[0]
-            scale_factor = 0.5
+            scale_factor = 0.3
             tolerance = 0.05
 
             if self.state == State.TARGET_AIMING:
+                self.grasping(open=True)
                 target_pose = Pose(
                     position=Point(
-                        x=target.pose.position.x - 0.2,
-                        y=target.pose.position.y,
+                        x=target.pose.position.x,
+                        y=target.pose.position.y - 0.2,
                         z=target.pose.position.z,
                     ),
-                    orientation=orientation,
+                    orientation=self.home_pose.orientation,
                 )
                 tolerance = 0.05
 
             elif self.state == State.TARGET_POSITIONING:
+                self.temperal_reset()
                 target_pose = Pose(
                     position=target.pose.position,
-                    orientation=orientation,
+                    orientation=self.home_pose.orientation,
                 )
-                tolerance = 0.01
+                tolerance = 0.02
 
             elif self.state == State.HOME_AIMING:
+                self.temperal_reset()
                 target_pose = Pose(
                     position=Point(
-                        x=target.pose.position.x - 0.2,
-                        y=target.pose.position.y,
-                        z=target.pose.position.z,
+                        x=target.pose.position.x,
+                        y=target.pose.position.y - 0.2,
+                        z=target.pose.position.z + 0.1,
                     ),
-                    orientation=orientation,
+                    orientation=self.home_pose.orientation,
                 )
-                tolerance = 0.01
+                tolerance = 0.02
 
             elif self.state == State.HOME_POSITIONING:
+                self.temperal_reset()
                 target_pose = Pose(
                     position=self.home_pose.position,
-                    orientation=orientation,
+                    orientation=self.home_pose.orientation,
                 )
                 tolerance = 0.05
 
@@ -181,12 +271,16 @@ class MainControlNode(object):
                 return False
 
         elif self.state == State.GRASPING:
-            # self.grasping(open=True)
-            self.state = State.HOME_AIMING
+            self.grasping(open=False)
+            if self.gripper_joint_states is not None:
+                if self.gripper_joint_states.position[0] > 0.05:
+                    self.state = State.HOME_AIMING
 
         elif self.state == State.UNGRASPING:
-            # self.grasping(open=False)
-            self.state = State.FCN_SEARCHING
+            self.grasping(open=True)
+            if self.gripper_joint_states is not None:
+                if self.gripper_joint_states.position[0] < 0.05:
+                    self.state = State.FCN_POSITIONING
 
         else:
             self._node.get_logger().warn("Invalid State.")
@@ -201,7 +295,7 @@ class MainControlNode(object):
         """
         if self.home_pose is None:
             fk_response: GetPositionFK.Response = self._moveit_client.compute_fk(
-                end_effector=self.end_effector
+                end_effector=self.end_effector, joint_states=self.home_joints
             )
             if fk_response is not None:
                 self.home_pose = self._moveit_client.handle_compute_fk_response(
@@ -215,6 +309,20 @@ class MainControlNode(object):
 
         return False
 
+    def temperal_reset(self):
+        self.initialize()
+
+        transformed_bbox_3d = self.transform_bbox3d(bbox_3d=BoundingBox3DMultiArray())
+        collision_objects = self.collision_object_from_bbox_3d(
+            header=Header(
+                stamp=self._node.get_clock().now().to_msg(), frame_id="base_link"
+            ),
+            bbox_3d=transformed_bbox_3d,
+        )
+        self._moveit_client.apply_planning_scene(collision_objects=collision_objects)
+
+        return True
+
     def fcn_searching(self):
         self.initialize()
 
@@ -226,28 +334,105 @@ class MainControlNode(object):
             self._node.get_logger().warn("No object detected.")
             return None
 
-        # # Update Planning Scene
+        marker_array_msg = MegaPoseClient.parse_resonse_to_marker_array(
+            response=bbox_3d,
+            header=Header(
+                stamp=self._node.get_clock().now().to_msg(), frame_id="camera1_link"
+            ),
+        )
+
+        for _ in range(5):
+            self.target_publisher.publish(marker_array_msg)
+
+        # Update Planning Scene
+        transformed_bbox_3d = self.transform_bbox3d(bbox_3d=bbox_3d)
+        if transformed_bbox_3d is None:
+            return None
+
+        transformed_bbox_3d = self.append_default_collision_objects(transformed_bbox_3d)
+
         collision_objects = self.collision_object_from_bbox_3d(
             header=Header(
                 stamp=self._node.get_clock().now().to_msg(), frame_id="base_link"
             ),
-            bbox_3d=bbox_3d,
+            bbox_3d=transformed_bbox_3d,
         )
         self._moveit_client.apply_planning_scene(collision_objects=collision_objects)
 
         return bbox_3d
 
+    def append_default_collision_objects(
+        self, transformed_bbox_3d: BoundingBox3DMultiArray
+    ):
+        transformed_bbox_3d.data.append(
+            BoundingBox3D(
+                id=999,
+                cls="camera_box",
+                pose=Pose(
+                    position=Point(x=0.0, y=-0.44, z=0.3),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                scale=Vector3(x=0.1, y=0.1, z=0.6),
+            )
+        )
+
+        # Add Plane Box
+        transformed_bbox_3d.data.append(
+            BoundingBox3D(
+                id=998,
+                cls="plane_box",
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=-0.5 - 0.01),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                scale=Vector3(x=0.8, y=0.44, z=1.0),
+            )
+        )
+
+        # Add Shelf Box
+        transformed_bbox_3d.data.append(
+            BoundingBox3D(
+                id=997,
+                cls="shelf_box1",
+                pose=Pose(
+                    position=Point(x=0.0, y=0.6, z=0.25),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                scale=Vector3(x=0.8, y=0.44, z=0.08),
+            )
+        )
+
+        transformed_bbox_3d.data.append(
+            BoundingBox3D(
+                id=996,
+                cls="shelf_box2",
+                pose=Pose(
+                    position=Point(x=0.0, y=0.6, z=0.73),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                scale=Vector3(x=0.8, y=0.44, z=0.08),
+            )
+        )
+
+        return transformed_bbox_3d
+
     def grasping(self, open: bool = True):
         self._gripper_client.control_gripper(open=open)
 
     def control(
-        self, header: Header, target_pose: Pose, tolerance: float, scale_factor: float
+        self,
+        header: Header,
+        target_pose: Pose,
+        tolerance: float,
+        scale_factor: float,
+        joint_states: JointState = None,
     ):
         goal_constraints = self._moveit_client.get_goal_constraint(
             pose_stamped=PoseStamped(header=header, pose=target_pose),
             orientation_constraints=None,
             tolerance=tolerance,
             end_effector=self.end_effector,
+            joint_states=joint_states,
         )
         path_constraint = Constraints(
             name="path_constraint",
@@ -307,12 +492,46 @@ class MainControlNode(object):
                     scaled_trajectory = MainControlNode.scale_trajectory(
                         scale_factor=scale_factor, trajectory=kinematic_path
                     )
+
                     self._moveit_client.execute_trajectory(trajectory=scaled_trajectory)
                     return True
 
         return False
 
     # <<< Methods for Each State
+
+    def transform_bbox3d(
+        self, bbox_3d: BoundingBox3DMultiArray, target_frame: str = "base_link"
+    ) -> BoundingBox3DMultiArray:
+        if self.tf_buffer.can_transform(
+            target_frame,
+            "camera1_link",
+            time=self._node.get_clock().now(),
+            timeout=Duration(seconds=1),
+        ):
+            for bbox in bbox_3d.data:
+                bbox: BoundingBox3D
+
+                pose = TF2PoseStamped(
+                    header=Header(
+                        stamp=self._node.get_clock().now().to_msg(),
+                        frame_id="camera1_link",
+                    ),
+                    pose=bbox.pose,
+                )
+                pose = self.tf_buffer.transform(
+                    object_stamped=pose,
+                    target_frame=target_frame,
+                    timeout=Duration(seconds=1),
+                )
+                bbox.pose = pose.pose
+        else:
+            self._node.get_logger().warn(
+                f"Cannot lookup transform between {target_frame} and camera1_link."
+            )
+            return None
+
+        return bbox_3d
 
     @staticmethod
     def collision_object_from_bbox_3d(
