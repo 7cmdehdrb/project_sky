@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(ur_gripper)
+project(test)
 
 find_package(ament_cmake REQUIRED)
 
