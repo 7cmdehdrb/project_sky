@@ -306,7 +306,7 @@ class ObjectPoseEstimator(Node):
 
         cTo_matrix_ros = QuaternionAngle.transform_realsense_to_ros(cTo_matrix)
         translation_matrix = cTo_matrix_ros[:3, 3] + np.array(
-            [0, 0, self.obj_bounds[label]["z"] / 2.0]
+            [0, 0, self.obj_bounds[label]["y"] / 2.0]
         )
 
         rotation_matrix = cTo_matrix_ros[:3, :3]
@@ -324,9 +324,9 @@ class ObjectPoseEstimator(Node):
                 ),
             ),
             scale=Vector3(
-                x=self.obj_bounds[label]["x"],
-                y=self.obj_bounds[label]["z"],
-                z=self.obj_bounds[label]["y"],
+                x=np.clip(self.obj_bounds[label]["x"], 0.0, 0.05),
+                y=np.clip(self.obj_bounds[label]["y"], 0.0, 0.2),
+                z=np.clip(self.obj_bounds[label]["z"], 0.0, 0.05),
             ),
         )
 

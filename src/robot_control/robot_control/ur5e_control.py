@@ -348,34 +348,6 @@ class MoveitClient(object):
 
         return True
 
-        flag = True
-
-        if flag:
-            goal_constraints = self.get_goal_constraint(
-                pose_stamped=PoseStamped(
-                    header=header,
-                    pose=pose,
-                )
-            )
-
-            if goal_constraints is not None:
-                kinematic_path_response = self.plan_kinematic_path(
-                    goal_constraints=[goal_constraints]
-                )
-                if kinematic_path_response is not None:
-                    path = self.handle_plan_kinematic_path_response(
-                        kinematic_path_response, header
-                    )
-
-        else:
-            cartesian_path_response = self.compute_cartesian_path(
-                header=header, waypoints=waypoints
-            )
-            if cartesian_path_response is not None:
-                path = self.handle_cartesian_path_response(
-                    cartesian_path_response, header
-                )
-
     # <<< Main Loop <<<
     def feedback_callback(self, feedback_msg: ExecuteTrajectory.Feedback):
         # self._node.get_logger().info(f"Received feedback: {feedback_msg}")
@@ -519,10 +491,15 @@ class MoveitClient(object):
 
         return res
 
-    def compute_fk(self, end_effector: str = "wrist_3_link"):
+    def compute_fk(
+        self, end_effector: str = "wrist_3_link", joint_states: JointState = None
+    ):
         # Exception handling
         if self._joint_states is None:
             return None
+
+        if joint_states is None:
+            joint_states = self._joint_states
 
         request = GetPositionFK.Request(
             header=Header(
@@ -530,7 +507,7 @@ class MoveitClient(object):
                 frame_id="base_link",
             ),
             fk_link_names=[end_effector],
-            robot_state=RobotState(joint_state=self._joint_states),
+            robot_state=(RobotState(joint_state=joint_states)),
         )
 
         response = self.compute_fk_client.send_request(request)
@@ -560,7 +537,9 @@ class MoveitClient(object):
         return res
 
     def plan_kinematic_path(
-        self, goal_constraints: list, path_constraints: Constraints = None
+        self,
+        goal_constraints: list,
+        path_constraints: Constraints = None,
     ):
         """
         Unused Parameters:
@@ -617,24 +596,30 @@ class MoveitClient(object):
         orientation_constraints=None,
         tolerance=0.1,
         end_effector: str = "wrist_3_link",
+        joint_states: JointState = None,
     ):
-        ik_response: GetPositionIK.Response = self.compute_ik(
-            pose_stamped=pose_stamped, end_effector=end_effector
-        )
 
-        if ik_response is None:
-            return None
-
-        code = ik_response.error_code.val
-        if code != MoveItErrorCodes.SUCCESS:
-            code_type = self.compute_ik_client.get_error_code(code)
-            self._node.get_logger().warn(
-                f"Error code in compute_ik service: {code}/{code_type}"
+        if joint_states is None:
+            ik_response: GetPositionIK.Response = self.compute_ik(
+                pose_stamped=pose_stamped, end_effector=end_effector
             )
-            self._node.get_logger().warn(f"{ik_response.solution}")
-            return None
 
-        joint_state: JointState = ik_response.solution.joint_state
+            if ik_response is None:
+                return None
+
+            code = ik_response.error_code.val
+            if code != MoveItErrorCodes.SUCCESS:
+                code_type = self.compute_ik_client.get_error_code(code)
+                self._node.get_logger().warn(
+                    f"Error code in compute_ik service: {code}/{code_type}"
+                )
+                self._node.get_logger().warn(f"{ik_response.solution}")
+                return None
+
+            joint_state: JointState = ik_response.solution.joint_state
+
+        else:
+            joint_state = joint_states
 
         name, position = joint_state.name, joint_state.position
 

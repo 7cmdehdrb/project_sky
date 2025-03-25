@@ -4,4 +4,4 @@ ros2 action send_goal /scaled_joint_trajectory_controller/follow_joint_trajector
 
 'shoulder_lift_joint','elbow_joint','wrist_1_joint','wrist_2_joint','wrist_3_joint','shoulder_pan_joint'
 
-src/ros2_robotiq_gripper-humble/robotiq_description/launch/robotiq_control.launch.py
+ros2 launch robotiq_description robotiq_control.launch.py 
