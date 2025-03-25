@@ -21,3 +21,6 @@
 	path = src/web_video_server
 	url = https://github.com/RobotWebTools/web_video_server.git
 	branch = ros2
+[submodule "src/Universal_Robots_ROS2_Driver"]
+	path = src/Universal_Robots_ROS2_Driver
+	url = https://github.com/7cmdehdrb/Universal_Robots_ROS2_Driver.git
