@@ -112,7 +112,7 @@ class FCNServerNode(Node):
 
         # ROS2 Subscribers, Publishers, and Services
         self.srv = self.create_service(
-            FCNRequest, "fcn_request", self.fcn_request_callback
+            FCNRequest, "/fcn_request", self.fcn_request_callback
         )
         self.image_subscription = self.create_subscription(
             Image,

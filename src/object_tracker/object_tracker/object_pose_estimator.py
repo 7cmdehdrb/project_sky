@@ -75,12 +75,12 @@ class MegaPoseEstimator(MegaPoseClient):
         self.intrinsics_flag = False
 
         self.names = {
-            # "cup_1": "sky",
-            # "cup_2": "white",
-            # "cup_3": "blue",
-            # "mug_1": "black",
-            # "mug_2": "gray",
-            # "mug_3": "yello",
+            "cup_1": "cup_sky",
+            "cup_2": "cup_white",
+            "cup_3": "cup_blue",
+            "mug_1": "mug_black",
+            "mug_2": "mug_gray",
+            "mug_3": "mug_yello",
             "bottle_1": "alive",
             "bottle_2": "green_tea",
             "bottle_3": "yello_smoothie",
@@ -269,10 +269,19 @@ class ObjectPoseEstimator(Node):
         response_msg = BoundingBox3DMultiArray()
         for label, detection in zip(labels, detections):
             data = {
-                "detections": [detection],
+                "detections": [
+                    [
+                        int(detection[0] - 5),
+                        int(detection[1] - 5),
+                        int(detection[2] + 5),
+                        int(detection[3] + 5),
+                    ]
+                ],
                 "labels": [label],
                 "use_depth": False,
             }
+
+            self.get_logger().info(f"Requesting: {label}")
             results = self.tracking_client.send_pose_request(
                 image=np_image, json_data=data
             )
@@ -282,8 +291,10 @@ class ObjectPoseEstimator(Node):
                 continue
 
             bbox_3d = self.post_process_result(results[0], label)
+
             if bbox_3d is not None:
                 response_msg.data.append(bbox_3d)
+                self.get_logger().info(f"Response: {bbox_3d}")
 
         response.response = response_msg
 
@@ -298,6 +309,7 @@ class ObjectPoseEstimator(Node):
         cls = self.tracking_client.clss[label]
 
         if score < self.tracking_client.score_threshold:
+            self.get_logger().warn(f"Score is lower than threshold: {score}, {label}")
             return None
 
         offset_matrix = np.zeros((4, 4))

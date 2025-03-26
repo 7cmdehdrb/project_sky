@@ -34,7 +34,7 @@ def get_obj_bounds(file_path):
 
 
 # 사용 예:
-root_dir = "/home/min/7cmdehdrb/ros2_ws/src/object_tracker/resource/models"
+root_dir = "/home/irol/workspace/project_sky/src/object_tracker/resource/models"
 folders = os.listdir(root_dir)
 
 result = {}

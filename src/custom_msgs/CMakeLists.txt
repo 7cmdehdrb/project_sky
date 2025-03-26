@@ -24,6 +24,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/FCNRequest.srv"
   "srv/FCNOccupiedRequest.srv"
   "srv/MegaposeRequest.srv"
+  "srv/FCNIntegratedRequest.srv"
   DEPENDENCIES geometry_msgs std_msgs nav_msgs
 )
 

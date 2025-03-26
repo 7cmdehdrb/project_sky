@@ -133,7 +133,7 @@ class PointCloudGridIdentifier(Node):
                     z=0.01,
                 ),
                 color=ColorRGBA(r=1.0, g=1.0, b=1.0, a=0.7),
-                text=f"{self.row_id}{self.col_id}\t{int(self.points * 0.001)}k",
+                text=f"{self.row_id}{self.col_id}\t{int(self.points)}",
                 # text=f"{int(self.points)}",
             )
 
@@ -201,7 +201,7 @@ class PointCloudGridIdentifier(Node):
         self.srv = self.create_service(
             FCNOccupiedRequest, "fcn_occupied_request", self.fcn_request_callback
         )
-        
+
         self.command_text_publisher = self.create_publisher(
             String,
             "/hello",
@@ -291,11 +291,13 @@ class PointCloudGridIdentifier(Node):
                 response.moving_cols.append(grid.col_id)
 
         action = "Sweaping" if response.action else "Grasping"
-        
+
         # self.command_text = f"{action} from {response.moving_row}{int(request.target_col)} \
         #             to {response.moving_row}{response.moving_cols.tolist()}"
-        self.command_text = f"Remove the object at {response.moving_row}{int(request.target_col)}"
-        
+        self.command_text = (
+            f"Remove the object at {response.moving_row}{int(request.target_col)}"
+        )
+
         self.get_logger().info(
             f"Return response - \
                 {action} from {response.moving_row}{int(request.target_col)} \
@@ -336,6 +338,8 @@ class PointCloudGridIdentifier(Node):
                     threshold=self.point_threshold,
                 )
 
+                print(f"Grid {row}{col} is created at {center_coord}")
+
                 grids.append(grid)
                 grids_dict[f"{row}{col}"] = grid
 
@@ -343,7 +347,7 @@ class PointCloudGridIdentifier(Node):
 
     def publish_grid_marker(self):
         self.command_text_publisher.publish(String(data=self.command_text))
-        
+
         header = Header(frame_id="camera1_link", stamp=self.get_clock().now().to_msg())
 
         marker_array = MarkerArray()

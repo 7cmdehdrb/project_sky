@@ -12,6 +12,7 @@ from sensor_msgs.msg import *
 from nav_msgs.msg import *
 from visualization_msgs.msg import *
 from custom_msgs.msg import *
+from custom_msgs.srv import *
 from moveit_msgs.msg import *
 from trajectory_msgs.msg import *
 from moveit_msgs.srv import *
@@ -25,40 +26,193 @@ from tf2_ros import *
 # Python
 import numpy as np
 from enum import Enum
+import json
 
 # custom
 from base_package.header import QuaternionAngle
 from robot_control.ur5e_control import MoveitClient
 from robot_control.gripper_action import GripperActionClient
+from robot_control.fcn_integration_client import FCN_IntegratedClient
 from object_tracker.object_pose_estimator_client import MegaPoseClient
 
 
 class State(Enum):
     WAITING = -1
-    FCN_SEARCHING = 0
-    GRASPING_POSITIONING = 1
-    TARGET_AIMING = 2
-    TARGET_POSITIONING = 3
-    GRASPING = 4
-    HOME_AIMING = 5
-    HOME_POSITIONING = 6
-    UNGRASPING = 7
-    FCN_POSITIONING = 8
+    MEGAPOSE_SEARCHING = 0
+    FCN_SEARCHING = 1
+    GRASPING_POSITIONING = 2
+    TARGET_AIMING = 3
+    TARGET_POSITIONING = 4
+    GRASPING = 5
+    HOME_AIMING = 6
+    HOME_POSITIONING = 7
+    DROP_POSITIONING = 8
+    UNGRASPING = 9
+    FCN_POSITIONING = 10
+
+
+class ObjectSelector(object):
+    class Grid(object):
+        def __init__(self, row: str, col: int, position=Point()):
+            self.row = row
+            self.col = col
+            self.position = position
+
+    def __init__(self, node: Node, buffer: Buffer, tf_listener: TransformListener):
+        with open(
+            "/home/irol/workspace/project_sky/src/fcn_network/resource/grid_data.json"
+        ) as f:
+            grid_data = json.load(f)
+
+        self._node = node
+        self._buffer = buffer
+        self._tf_listener = tf_listener
+
+        self.rows = grid_data["rows"]
+        self.cols = grid_data["columns"]
+
+        self.start_coord = Point(
+            x=grid_data["grid_identifier"]["start_center_coord"]["x"],
+            y=grid_data["grid_identifier"]["start_center_coord"]["y"],
+            z=0.0,
+        )
+
+        self.grid_size = Vector3(
+            x=grid_data["grid_identifier"]["grid_size"]["x"],
+            y=grid_data["grid_identifier"]["grid_size"]["y"],
+            z=0.0,
+        )
+
+        grids = []
+        # A, B, C
+        for r, row in enumerate(self.rows):
+            # 1, 2, 3
+            for c, col in enumerate(self.cols):
+
+                center_coord = Point(
+                    x=self.start_coord.x + self.grid_size.x * r,
+                    y=self.start_coord.y - self.grid_size.y * c,
+                    z=0.0,
+                )
+
+                grid = ObjectSelector.Grid(row=row, col=col, position=center_coord)
+
+                print(grid.row, grid.col, grid.position)
+                grids.append(grid)
+
+        self.grids = grids
+
+    def get_center_coord(self, row: str, col: int):
+        for grid in self.grids:
+            grid: ObjectSelector.Grid
+            if grid.row == row and grid.col == col:
+                return grid.position
+
+        return None
+
+    def get_target_object(
+        self, row: str, col: int, target_objects: BoundingBox3DMultiArray
+    ):
+        # At World Frame
+        center_coord = self.get_center_coord(row=row, col=col)
+        if center_coord is None:
+            return None
+
+        if self._buffer.can_transform(
+            "world", "camera1_link", self._node.get_clock().now()
+        ):
+            transformed_center_coord = self._buffer.transform(
+                object_stamped=TF2PoseStamped(
+                    header=Header(
+                        stamp=self._node.get_clock().now().to_msg(),
+                        frame_id="camera1_link",
+                    ),
+                    pose=Pose(
+                        position=center_coord,
+                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                    ),
+                ),
+                target_frame="world",
+                timeout=Duration(seconds=1),
+            ).pose.position
+
+            self._node.get_logger().info(
+                f"Transformed Center Coord: {transformed_center_coord}"
+            )
+
+            min_distance = float("inf")
+            result_target_object = None
+            for target_object in target_objects.data:
+                target_object: BoundingBox3D
+
+                if target_object.id > 900:
+                    self._node.get_logger().warn(
+                        f"Skip Object: {target_object.cls}, {target_object.id}"
+                    )
+
+                    pass
+                else:
+                    distance = np.linalg.norm(
+                        np.array(
+                            [
+                                target_object.pose.position.x,
+                                target_object.pose.position.y,
+                            ]
+                        )
+                        - np.array(
+                            [transformed_center_coord.x, transformed_center_coord.y]
+                        )
+                    )
+
+                    self._node.get_logger().info(f"Target Object: {target_object.cls}")
+                    self._node.get_logger().info(f"Distance: {distance}")
+                    self._node.get_logger().info(
+                        f"Target Position: {target_object.pose.position}"
+                    )
+
+                    if distance < min_distance:
+                        min_distance = distance
+                        result_target_object = target_object
+
+            self._node.get_logger().info("*" * 10)
+            self._node.get_logger().info(f"Min Distance: {min_distance}")
+
+            self._node.get_logger().info(f"Center Coord: {transformed_center_coord}")
+            self._node.get_logger().info(f"Target Object: {result_target_object.cls}")
+            self._node.get_logger().info(
+                f"Target Position: {result_target_object.pose.position}"
+            )
+            return result_target_object
+
+        return None
 
 
 class MainControlNode(object):
     def __init__(self, node: Node):
         self._node = node
 
-        self._moveit_client = MoveitClient(node=self._node)
-        self._gripper_client = GripperActionClient(node=self._node)
-        self._megapose_client = MegaPoseClient(node=self._node)
-        self.state = State.WAITING
-
         self.tf_buffer = Buffer(node=self._node, cache_time=Duration(seconds=1))
         self.tf_listener = TransformListener(
             self.tf_buffer, self._node, qos=qos_profile_system_default
         )
+
+        self._moveit_client = MoveitClient(node=self._node)
+        self._gripper_client = GripperActionClient(node=self._node)
+        self._megapose_client = MegaPoseClient(node=self._node)
+        self._fcn_integrated_client = FCN_IntegratedClient(node=self._node)
+        self._object_selector = ObjectSelector(
+            node=self._node, buffer=self.tf_buffer, tf_listener=self.tf_listener
+        )
+
+        self.test_sub = self._node.create_subscription(
+            String,
+            "result_fcn_target",
+            self.test_callback,
+            qos_profile=qos_profile_system_default,
+        )
+        self.fcn_result = [None, None]
+
+        self.state = State.WAITING
 
         self.gripper_joint_subscriber = self._node.create_subscription(
             JointState,
@@ -69,8 +223,10 @@ class MainControlNode(object):
         self.gripper_joint_states = None
 
         self.home_pose = None
+        self.drop_pose = None
         self.end_effector = "gripper_link"
-        self.target_obects: BoundingBox3DMultiArray = None
+        self.target_objects: BoundingBox3DMultiArray = None
+        self.target_object: BoundingBox3D = None
 
         self.home_joints = JointState(
             name=[
@@ -88,6 +244,24 @@ class MainControlNode(object):
                 4.695071220397949,
                 3.1019468307495117,
                 -1.616389576588766,
+            ],
+        )
+        self.dropping_joints = JointState(
+            name=[
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+                "shoulder_pan_joint",
+            ],
+            position=[
+                -0.853251652126648,
+                -2.4234585762023926,
+                -3.0269695721068324,
+                4.695071220397949,
+                3.1019468307495117,
+                1.1181697845458984,
             ],
         )
         self.waiting_joints = JointState(
@@ -109,16 +283,19 @@ class MainControlNode(object):
             ],
         )
 
-        self.test = self._node.create_publisher(
+        self.target_pose_publisher = self._node.create_publisher(
             PoseStamped,
-            self._node.get_name() + "test",
+            self._node.get_name() + "/target_pose",
             qos_profile=qos_profile_system_default,
         )
-        self.target_publisher = self._node.create_publisher(
-            MarkerArray,
-            self._node.get_name() + "/target",
-            qos_profile=qos_profile_system_default,
-        )
+
+    def test_callback(self, msg: String):
+        current_row, current_col = self.fcn_result
+        if current_row is None and current_col is None:
+            txt = msg.data
+            row, col = txt.split(",")
+            self.fcn_result = [col, row]  # A, 1
+            self._node.get_logger().info(f"FCN Result: {self.fcn_result}")
 
     def gripper_joint_callback(self, msg: JointState):
         self.gripper_joint_states = msg
@@ -126,84 +303,105 @@ class MainControlNode(object):
     def initialize(self):
         self._moveit_client.initialize_world()
 
-    def get_test_data(self) -> BoundingBox3DMultiArray:
-        result = BoundingBox3DMultiArray()
-
-        box = BoundingBox3D()
-        box.cls = "test1"
-        box.pose = Pose(
-            position=Point(x=0.85, y=0.0, z=0.2),
-            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-        )
-        box.scale = Vector3(x=0.05, y=0.05, z=0.12)
-        result.data.append(box)
-
-        box = BoundingBox3D()
-        box.cls = "test2"
-        box.pose = Pose(
-            position=Point(x=0.75, y=0.15, z=0.2),
-            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-        )
-        box.scale = Vector3(x=0.05, y=0.05, z=0.12)
-        # result.data.append(box)
-
-        box = BoundingBox3D()
-        box.cls = "test3"
-        box.pose = Pose(
-            position=Point(x=0.75, y=-0.15, z=0.2),
-            orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-        )
-        box.scale = Vector3(x=0.05, y=0.05, z=0.12)
-        # result.data.append(box)
-
-        return result
-
     def run(self):
-        header = Header(
-            stamp=self._node.get_clock().now().to_msg(), frame_id="base_link"
-        )
+        header = Header(stamp=self._node.get_clock().now().to_msg(), frame_id="world")
         self._node.get_logger().info(f"Running State: {self.state}")
 
         if self.state == State.WAITING:
             if self.waiting():
-                self.state = State.FCN_SEARCHING
+                self.state = State.MEGAPOSE_SEARCHING
                 return True
             else:
                 self._node.get_logger().warn("Error in Waiting. Home Pose Not Set.")
                 return False
 
-        elif self.state == State.FCN_SEARCHING:
-            self.target_obects = self.fcn_searching()
-            if self.target_obects is not None:
-                # self.state = State.TARGET_AIMING
-                self.state = State.GRASPING_POSITIONING
+        elif self.state == State.MEGAPOSE_SEARCHING:
+            self.fcn_result = [None, None]
+            self.target_objects = self.fcn_searching()
+            if self.target_objects is not None:
+                self.state = State.FCN_SEARCHING
+                return True
             else:
-                self._node.get_logger().warn("Error in FCN Searching. No Object Found.")
+                self._node.get_logger().warn(
+                    "Error in Megapose Searching. No Object Found."
+                )
                 return False
+
+        elif self.state == State.FCN_SEARCHING:
+            row, col = self.fcn_result
+            if row is not None and col is not None:
+                self.target_object = self._object_selector.get_target_object(
+                    row=row, col=int(col), target_objects=self.target_objects
+                )
+
+                if self.target_object is not None:
+                    self.state = State.GRASPING_POSITIONING
+                    self.fcn_result = [None, None]
+                    return True
+
+                else:
+                    self._node.get_logger().warn(
+                        "Error in FCN Searching. No Target Object Found."
+                    )
+                    return False
+
+            else:
+                self._node.get_logger().warn("Error in FCN Searching. No FCN data.")
+
+            return False
 
         elif (
             self.state == State.GRASPING_POSITIONING
             or self.state == State.FCN_POSITIONING
+            or self.state == State.DROP_POSITIONING
         ):
             if self.state == State.GRASPING_POSITIONING:
                 if self.control(
                     header=header,
-                    target_pose=Pose(),
-                    scale_factor=0.2,
-                    tolerance=0.02,
+                    target_pose=Pose(),  # None
+                    scale_factor=0.4,
+                    tolerance=0.01,
                     joint_states=self.home_joints,
                 ):
                     self.state = State.TARGET_AIMING
+                    return True
+                else:
+                    self._node.get_logger().warn(
+                        "Error in GRASPING_POSITIONING. Control Failed."
+                    )
+                    return False
 
             elif self.state == State.FCN_POSITIONING:
                 if self.control(
                     header=header,
-                    target_pose=Pose(),
-                    scale_factor=0.2,
-                    tolerance=0.02,
+                    target_pose=Pose(),  # None
+                    scale_factor=0.4,
+                    tolerance=0.01,
                     joint_states=self.waiting_joints,
                 ):
-                    self.state = State.FCN_SEARCHING
+                    self.state = State.MEGAPOSE_SEARCHING
+                    return True
+                else:
+                    self._node.get_logger().warn(
+                        "Error in FCN_POSITIONING. Control Failed."
+                    )
+                    return False
+
+            elif self.state == State.DROP_POSITIONING:
+                if self.control(
+                    header=header,
+                    target_pose=Pose(),  # None
+                    scale_factor=0.4,
+                    tolerance=0.01,
+                    joint_states=self.dropping_joints,
+                ):
+                    self.state = State.UNGRASPING
+                    return True
+                else:
+                    self._node.get_logger().warn(
+                        "Error in DROP_POSITIONING. Control Failed."
+                    )
+                    return False
 
         elif (
             self.state == State.TARGET_AIMING
@@ -211,10 +409,9 @@ class MainControlNode(object):
             or self.state == State.HOME_AIMING
             or self.state == State.HOME_POSITIONING
         ):
-            # TODO: Replace with Real Data
-            orientation = Quaternion(x=0.5, y=0.5, z=0.5, w=0.5)
-            target: BoundingBox3D = self.target_obects.data[0]
-            scale_factor = 0.3
+            # Target which is transformed to world frame
+            target: BoundingBox3D = self.target_object
+            scale_factor = 0.5
             tolerance = 0.05
 
             if self.state == State.TARGET_AIMING:
@@ -227,37 +424,51 @@ class MainControlNode(object):
                     ),
                     orientation=self.home_pose.orientation,
                 )
-                tolerance = 0.05
+                scale_factor = 0.5
+                tolerance = 0.04
 
             elif self.state == State.TARGET_POSITIONING:
-                self.temperal_reset()
+                # self.temperal_reset()
                 target_pose = Pose(
-                    position=target.pose.position,
+                    position=Point(
+                        x=target.pose.position.x,
+                        y=target.pose.position.y,
+                        z=target.pose.position.z,  # Offset 2 cm below
+                    ),
                     orientation=self.home_pose.orientation,
                 )
+                scale_factor = 0.2
                 tolerance = 0.02
 
             elif self.state == State.HOME_AIMING:
-                self.temperal_reset()
+                # self.temperal_reset()
                 target_pose = Pose(
                     position=Point(
                         x=target.pose.position.x,
                         y=target.pose.position.y - 0.2,
-                        z=target.pose.position.z + 0.1,
+                        z=target.pose.position.z + 0.05,  # Offset 5 cm above
                     ),
                     orientation=self.home_pose.orientation,
                 )
-                tolerance = 0.02
+                scale_factor = 0.5
+                tolerance = 0.04
 
             elif self.state == State.HOME_POSITIONING:
-                self.temperal_reset()
+                # self.temperal_reset()
                 target_pose = Pose(
-                    position=self.home_pose.position,
+                    position=Point(
+                        x=self.home_pose.position.x,
+                        y=self.home_pose.position.y,
+                        z=self.home_pose.position.z + 0.05,  # Offset 5 cm above
+                    ),
                     orientation=self.home_pose.orientation,
                 )
-                tolerance = 0.05
+                scale_factor = 0.5
+                tolerance = 0.04
 
-            self.test.publish(PoseStamped(header=header, pose=target_pose))
+            self.target_pose_publisher.publish(
+                PoseStamped(header=header, pose=target_pose)
+            )
 
             if self.control(
                 header=header,
@@ -266,6 +477,7 @@ class MainControlNode(object):
                 tolerance=tolerance,
             ):
                 self.state = State(self.state.value + 1)
+                return True
             else:
                 self._node.get_logger().warn("Error in Path Planning. Control Failed.")
                 return False
@@ -275,6 +487,7 @@ class MainControlNode(object):
             if self.gripper_joint_states is not None:
                 if self.gripper_joint_states.position[0] > 0.05:
                     self.state = State.HOME_AIMING
+                    return True
 
         elif self.state == State.UNGRASPING:
             self.grasping(open=True)
@@ -293,6 +506,8 @@ class MainControlNode(object):
         """
         Initialize Home Pose. Return True if Home Pose is set.
         """
+        success1, success2 = False, False
+
         if self.home_pose is None:
             fk_response: GetPositionFK.Response = self._moveit_client.compute_fk(
                 end_effector=self.end_effector, joint_states=self.home_joints
@@ -305,47 +520,44 @@ class MainControlNode(object):
                 self._node.get_logger().info(
                     "Setting Home Pose: {}".format(self.home_pose)
                 )
-                return True
+                success1 = True
 
-        return False
+        if self.drop_pose is None:
+            fk_response: GetPositionFK.Response = self._moveit_client.compute_fk(
+                end_effector=self.end_effector, joint_states=self.dropping_joints
+            )
+            if fk_response is not None:
+                self.drop_pose = self._moveit_client.handle_compute_fk_response(
+                    response=fk_response
+                ).pose
 
-    def temperal_reset(self):
-        self.initialize()
+                self._node.get_logger().info(
+                    "Setting Home Pose: {}".format(self.drop_pose)
+                )
+                success2 = True
 
-        transformed_bbox_3d = self.transform_bbox3d(bbox_3d=BoundingBox3DMultiArray())
-        collision_objects = self.collision_object_from_bbox_3d(
-            header=Header(
-                stamp=self._node.get_clock().now().to_msg(), frame_id="base_link"
-            ),
-            bbox_3d=transformed_bbox_3d,
-        )
-        self._moveit_client.apply_planning_scene(collision_objects=collision_objects)
-
-        return True
+        return success1 and success2
 
     def fcn_searching(self):
         self.initialize()
 
         # Get All Object Poses
         bbox_3d: BoundingBox3DMultiArray = self._megapose_client.send_megapose_request()
-        # bbox_3d = self.get_test_data()
+        self._megapose_client.post_process_response(
+            response=bbox_3d,
+            header=Header(
+                frame_id="camera1_link", stamp=self._node.get_clock().now().to_msg()
+            ),
+        )
 
         if len(bbox_3d.data) == 0:
             self._node.get_logger().warn("No object detected.")
             return None
 
-        marker_array_msg = MegaPoseClient.parse_resonse_to_marker_array(
-            response=bbox_3d,
-            header=Header(
-                stamp=self._node.get_clock().now().to_msg(), frame_id="camera1_link"
-            ),
-        )
-
-        for _ in range(5):
-            self.target_publisher.publish(marker_array_msg)
-
         # Update Planning Scene
-        transformed_bbox_3d = self.transform_bbox3d(bbox_3d=bbox_3d)
+        transformed_bbox_3d = self.transform_bbox3d(
+            bbox_3d=bbox_3d, target_frame="world"
+        )
         if transformed_bbox_3d is None:
             return None
 
@@ -353,7 +565,7 @@ class MainControlNode(object):
 
         collision_objects = self.collision_object_from_bbox_3d(
             header=Header(
-                stamp=self._node.get_clock().now().to_msg(), frame_id="base_link"
+                stamp=self._node.get_clock().now().to_msg(), frame_id="world"
             ),
             bbox_3d=transformed_bbox_3d,
         )
@@ -369,10 +581,10 @@ class MainControlNode(object):
                 id=999,
                 cls="camera_box",
                 pose=Pose(
-                    position=Point(x=0.0, y=-0.44, z=0.3),
+                    position=Point(x=-0.04, y=-0.39, z=0.3),
                     orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
                 ),
-                scale=Vector3(x=0.1, y=0.1, z=0.6),
+                scale=Vector3(x=0.15, y=0.06, z=0.6),
             )
         )
 
@@ -395,10 +607,10 @@ class MainControlNode(object):
                 id=997,
                 cls="shelf_box1",
                 pose=Pose(
-                    position=Point(x=0.0, y=0.6, z=0.25),
+                    position=Point(x=0.0, y=0.6, z=0.23),
                     orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
                 ),
-                scale=Vector3(x=0.8, y=0.44, z=0.08),
+                scale=Vector3(x=0.8, y=0.44, z=0.04),
             )
         )
 
@@ -407,10 +619,10 @@ class MainControlNode(object):
                 id=996,
                 cls="shelf_box2",
                 pose=Pose(
-                    position=Point(x=0.0, y=0.6, z=0.73),
+                    position=Point(x=0.0, y=0.6, z=0.7),
                     orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
                 ),
-                scale=Vector3(x=0.8, y=0.44, z=0.08),
+                scale=Vector3(x=0.8, y=0.44, z=0.04),
             )
         )
 
@@ -501,7 +713,7 @@ class MainControlNode(object):
     # <<< Methods for Each State
 
     def transform_bbox3d(
-        self, bbox_3d: BoundingBox3DMultiArray, target_frame: str = "base_link"
+        self, bbox_3d: BoundingBox3DMultiArray, target_frame: str = "world"
     ) -> BoundingBox3DMultiArray:
         if self.tf_buffer.can_transform(
             target_frame,

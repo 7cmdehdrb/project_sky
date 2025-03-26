@@ -47,6 +47,25 @@ class MegaPoseClient(object):
         self.megapose_client = self._node.create_client(
             MegaposeRequest, "/megapose_request", qos_profile=qos_profile_system_default
         )
+        self.marker_array_pub = self._node.create_publisher(
+            MarkerArray,
+            self._node.get_name() + "/megapose/marker_array",
+            qos_profile=qos_profile_system_default,
+        )
+        self._unique_key = {
+            "cup_1": 0,
+            "cup_2": 1,
+            "cup_3": 2,
+            "mug_1": 3,
+            "mug_2": 4,
+            "mug_3": 5,
+            "bottle_1": 6,
+            "bottle_2": 7,
+            "bottle_3": 8,
+            "can_1": 9,
+            "can_2": 10,
+            "can_3": 11,
+        }
 
         while not self.megapose_client.wait_for_service(timeout_sec=1.0):
             self._node.get_logger().warn(
@@ -60,9 +79,17 @@ class MegaPoseClient(object):
         response: MegaposeRequest.Response = self.megapose_client.call(request)
         return response.response
 
-    @staticmethod
+    def post_process_response(
+        self, response: BoundingBox3DMultiArray, header: Header
+    ) -> bool:
+        marker_array = self.parse_resonse_to_marker_array(
+            response,
+            header,
+        )
+        self.marker_array_pub.publish(marker_array)
+
     def parse_resonse_to_marker_array(
-        response: BoundingBox3DMultiArray, header: Header
+        self, response: BoundingBox3DMultiArray, header: Header
     ) -> MarkerArray:
         marker_array = MarkerArray()
 
@@ -71,14 +98,14 @@ class MegaPoseClient(object):
 
             marker = Marker()
             marker.ns = bbox3d.cls
-            marker.id = id
+            marker.id = int(self._unique_key[bbox3d.cls])
             marker.header = header
             marker.type = Marker.CUBE
             marker.action = Marker.ADD
             marker.pose = bbox3d.pose
             marker.scale = bbox3d.scale
             marker.color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=1.0)
-            marker.lifetime = ROS2Duration(sec=5, nanosec=0)
+            marker.lifetime = ROS2Duration(sec=10, nanosec=0)
             marker_array.markers.append(marker)
 
         return marker_array
