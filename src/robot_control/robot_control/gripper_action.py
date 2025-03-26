@@ -30,7 +30,11 @@ class GripperActionClient(object):
 
         self._action_client.wait_for_server()
 
+<<<<<<< HEAD
         future: Future = self._action_client.send_goal_async(
+=======
+        future: Future = self._action_client.send_goal(
+>>>>>>> main
             goal_msg, feedback_callback=self.feedback_callback
         )
         future.add_done_callback(self.goal_response_callback)
@@ -58,7 +62,11 @@ def main(args=None):
     node = rclpy.create_node("gripper_action_client")
     gripper_action_client = GripperActionClient(node)
 
+<<<<<<< HEAD
     # # close gripper
+=======
+    # close gripper
+>>>>>>> main
     # gripper_action_client.control_gripper(open=False)
     # print("Gripper closed")
 

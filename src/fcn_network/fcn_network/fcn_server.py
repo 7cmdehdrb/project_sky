@@ -49,6 +49,7 @@ class FCNModel(nn.Module):
         return self.model(x)["out"]
 
 
+# Enum class
 class FCNClassNames(Enum):
     CAN_1 = 0
     CAN_2 = 1
@@ -73,22 +74,29 @@ class FCNServerNode(Node):
     def __init__(self):
         super().__init__("fcn_server_node")
 
-        # Initialize the FCN model
+        # >>> Initialize the FCN Model
         self.model = FCNModel()
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        # <<< Initialize the FCN Model
 
-        # Transform Parameters
-        self.do_transform = True
-        self.transformer = Normalize(
-            mean=[0.6501676617516412, 0.6430160918638441, 0.6165616299396091],
-            std=[0.16873769158467197, 0.17505241356408263, 0.1989546266815883],
-        )
-
-        # Load the pre-trained model
+        # >>> Load Files
         package_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "../resource")
         )
         model_path = os.path.join(package_path, "best_model_0318.pth")
+
+        grid_data_path = os.path.join(package_path, "grid_data.json")
+        with open(grid_data_path, "r") as f:
+            self.grid_data = json.load(f)
+        # <<< Load Files
+
+        # >>> FCN Parameters
+        self.do_transform = True
+        self.gain = 2.0
+        self.transformer = Normalize(
+            mean=[0.6501676617516412, 0.6430160918638441, 0.6165616299396091],
+            std=[0.16873769158467197, 0.17505241356408263, 0.1989546266815883],
+        )
         self.state_dict: dict = torch.load(
             model_path,
             map_location=self.device,
@@ -96,21 +104,15 @@ class FCNServerNode(Node):
         self.filtered_state_dict = {
             k: v for k, v in self.state_dict.items() if "aux_classifier" not in k
         }
+        # <<< FCN Model Parameters
 
-        self.gain = 2.0
-
+        # >>> Initialize the FCN Model
         self.model.eval()
         self.model.load_state_dict(self.filtered_state_dict, strict=False)
         self.model = self.model.to(self.device)
+        # <<< Initialize the FCN Model
 
-        # Load CV Bridge
-        self.bridge = cv_bridge.CvBridge()
-
-        grid_data_path = os.path.join(package_path, "grid_data.json")
-        with open(grid_data_path, "r") as f:
-            self.grid_data = json.load(f)
-
-        # ROS2 Subscribers, Publishers, and Services
+        # >>> ROS2 Subscribers, Publishers, and Services
         self.srv = self.create_service(
             FCNRequest, "/fcn_request", self.fcn_request_callback
         )
@@ -130,43 +132,111 @@ class FCNServerNode(Node):
             self.get_name() + "/plot_image",
             qos_profile=qos_profile_system_default,
         )
-        self.temp_col_subscription = self.create_subscription(
-            UInt16,
-            self.get_name() + "/moving_col",
-            self.temp_col_callback,
-            qos_profile=qos_profile_system_default,
-        )
+        self.image: Image = None
 
-        self.image = None
+        # >>> Load CV Bridge
+        self.bridge = cv_bridge.CvBridge()
+        # <<< Load CV Bridge
 
-        # Post-processed data
+        # >>> Post-processed data
         self.target_output = None
         self.post_processed_data = None
         self.top_peak_idx = [i for i in range(len(self.grid_data["columns"]))]
+        # <<< Post-processed data
 
-        self.iteration_num = 0
-        self.moving_col = -1
-
+        # >>> Main
         self.get_logger().info("FCN Server Node has been initialized.")
-
         self.create_timer(1.0, self.publish_processed_image)
+        # <<< Main
+
+    # >>> Callbacks
+    def image_callback(self, msg: Image):
+        self.image = msg
+
+    def fcn_request_callback(
+        self, request: FCNRequest.Request, response: FCNRequest.Response
+    ):
+        """
+        Args:
+            request (FCNRequest.Request):
+                str: target_cls
+            response (FCNRequest.Response):
+                int: target_col
+                int[]: empty_cols
+        Exceptions:
+            response (FCNRequest.Response):
+                int: target_col = -1
+                int[]: empty_cols = []
+        """
+        # Exception handling
+        if self.image is None:
+            self.get_logger().warn("No image received.")
+            response.target_col = -1
+            response.empty_cols = []
+            return response
+
+        self.get_logger().info(f"Request Received: {request.target_cls}")
+
+        # Get the class name from the target class
+        cls_names_dict = {cls.value: cls.name.lower() for cls in FCNClassNames}
+        target_cls_key = None
+        for key, value in cls_names_dict.items():
+            if value == request.target_cls:
+                target_cls_key = key
+                break
+        if target_cls_key is None:
+            response.empty_cols = []
+            return response
+
+        # Crop the image
+        img = self.bridge.imgmsg_to_cv2(self.image, "rgb8")
+        img = RealTimeSegmentationNode.crop_image(img, 640, 480)
+
+        # Predict the image
+        self.model.eval()
+        outputs = self.predict(img)
+
+        # Get the target output
+        target_output = outputs[target_cls_key]
+
+        # Set post-processed data: the target output
+        self.target_output = target_output
+
+        # TODO: Add the weights
+        weights = [1.0] * len(self.grid_data["columns"])
+        target_col, empty_cols = self.post_process_results(
+            target_output, np.array(weights)
+        )
+
+        # Set the response
+        response.target_col = target_col
+        response.empty_cols = empty_cols
+
+        self.get_logger().info(
+            f"Return response: target_col={target_col}, empty_cols={empty_cols}"
+        )
+
+        return response
+
+    # <<< Callbacks
 
     def publish_processed_image(self):
+        """
+        Publish the processed image and plot.
+        """
         if self.target_output is None or self.post_processed_data is None:
             return
 
-        # Convert the target output to a ROS2 Image message
+        # >>> STEP 1. Publish FCN Processed Image
         target_output_normalized = cv2.normalize(
             self.target_output, None, 0, 255, cv2.NORM_MINMAX
         ).astype(np.uint8)
-        # target_output_colored = cv2.applyColorMap(
-        #     target_output_normalized, cv2.COLORMAP_JET
-        # )
         msg = self.bridge.cv2_to_imgmsg(target_output_normalized, encoding="mono8")
 
         self.image_publisher.publish(msg)
+        # <<< STEP 1. Publish FCN Processed Image
 
-        # Convert the post-processed data to a ROS2 Image message
+        # >>> STEP 2. Publish Plot Image
         fig = plt.figure(figsize=(16, 9))
         plt.plot(self.post_processed_data)
 
@@ -185,88 +255,14 @@ class FCNServerNode(Node):
 
         self.plot_publisher.publish(plot_image_msg)
         plt.close(fig)
-
-    def temp_col_callback(self, msg: UInt16):
-        self.moving_col = msg.data
-
-        self.get_logger().info(f"Force set moving column: {self.moving_col}")
-
-    def image_callback(self, msg: Image):
-        self.image = msg
-
-    def fcn_request_callback(
-        self, request: FCNRequest.Request, response: FCNRequest.Response
-    ):
-        self.get_logger().info(
-            f"Request Received - target class is {str(request.target_cls)}"
-        )
-
-        if str(request.target_cls) == "exit":
-            response.target_col = -1
-            response.empty_cols = []
-            self.iteration_num = 0
-            return response
-
-        # Define the target class
-        target_cls = request.target_cls
-
-        # Get the class name from the target class
-        cls_names_dict = {cls.value: cls.name.lower() for cls in FCNClassNames}
-        target_cls_key = None
-        for key, value in cls_names_dict.items():
-            if value == target_cls:
-                target_cls_key = key
-                break
-        if target_cls_key is None:
-            response.empty_cols = []
-            return response
-
-        # Exception handling
-        if self.image is None:
-            self.get_logger().warn("No image received.")
-            response.target_col = -1
-            response.empty_cols = []
-            return response
-
-        # Get the image
-        img = self.bridge.imgmsg_to_cv2(self.image, "rgb8")
-        img = RealTimeSegmentationNode.crop_image(img, 640, 480)
-
-        # Predict the image
-        self.model.eval()
-        outputs = self.predict(img)
-
-        # Get the target output
-        target_output = outputs[target_cls_key]
-
-        # Set post-processed data: the target output
-        self.target_output = target_output
-
-        # Post-process the results
-        weights = [1.0] * len(self.grid_data["columns"])
-        if self.moving_col == 9:
-            pass
-        elif self.iteration_num != 0 and self.moving_col != -1:
-            weights[self.moving_col] = 0.3
-
-        target_col, empty_cols = self.post_process_results(
-            target_output, np.array(weights)
-        )
-
-        # Set the response
-        response.target_col = target_col
-        response.empty_cols = empty_cols
-
-        self.get_logger().info(
-            f"Return response - {str(request.target_cls)} is located in colum called {empty_cols}.\n\
-                move it to colunm  called {target_col}"
-        )
-
-        self.iteration_num += 1
-
-        return response
+        # <<< STEP 2. Publish Plot Image
 
     def post_process_results(self, results: np.ndarray, weights: list) -> np.ndarray:
+        """
+        Input FCN results and weights, and return the target column and empty columns.
+        Returns:
+            [int: max_peak_idx, int[]: res(Available side columns)]
+        """
 
         normalized_results = results * np.exp(
             -self.gain * (1 - results)
@@ -302,9 +298,6 @@ class FCNServerNode(Node):
 
         if not (res2 > (num_peaks - 1)):
             res.append(res2)
-
-        print(max_peak_idx)
-        print(top_peak_datas)
 
         # target_col, empty_cols
         return max_peak_idx, res

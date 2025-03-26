@@ -404,6 +404,30 @@ class MainControlNode(object):
                     return False
 
         elif (
+            self.state == State.GRASPING_POSITIONING
+            or self.state == State.FCN_POSITIONING
+        ):
+            if self.state == State.GRASPING_POSITIONING:
+                if self.control(
+                    header=header,
+                    target_pose=Pose(),
+                    scale_factor=0.2,
+                    tolerance=0.02,
+                    joint_states=self.home_joints,
+                ):
+                    self.state = State.TARGET_AIMING
+
+            elif self.state == State.FCN_POSITIONING:
+                if self.control(
+                    header=header,
+                    target_pose=Pose(),
+                    scale_factor=0.2,
+                    tolerance=0.02,
+                    joint_states=self.waiting_joints,
+                ):
+                    self.state = State.FCN_SEARCHING
+
+        elif (
             self.state == State.TARGET_AIMING
             or self.state == State.TARGET_POSITIONING
             or self.state == State.HOME_AIMING
@@ -537,6 +561,20 @@ class MainControlNode(object):
                 success2 = True
 
         return success1 and success2
+
+    def temperal_reset(self):
+        self.initialize()
+
+        transformed_bbox_3d = self.transform_bbox3d(bbox_3d=BoundingBox3DMultiArray())
+        collision_objects = self.collision_object_from_bbox_3d(
+            header=Header(
+                stamp=self._node.get_clock().now().to_msg(), frame_id="base_link"
+            ),
+            bbox_3d=transformed_bbox_3d,
+        )
+        self._moveit_client.apply_planning_scene(collision_objects=collision_objects)
+
+        return True
 
     def fcn_searching(self):
         self.initialize()

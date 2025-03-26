@@ -47,6 +47,7 @@ class MegaPoseClient(object):
         self.megapose_client = self._node.create_client(
             MegaposeRequest, "/megapose_request", qos_profile=qos_profile_system_default
         )
+<<<<<<< HEAD
         self.marker_array_pub = self._node.create_publisher(
             MarkerArray,
             self._node.get_name() + "/megapose/marker_array",
@@ -66,6 +67,8 @@ class MegaPoseClient(object):
             "can_2": 10,
             "can_3": 11,
         }
+=======
+>>>>>>> main
 
         while not self.megapose_client.wait_for_service(timeout_sec=1.0):
             self._node.get_logger().warn(
