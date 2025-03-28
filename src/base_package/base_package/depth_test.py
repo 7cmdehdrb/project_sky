@@ -39,19 +39,7 @@ class DepthTestNode(Node):
 
     def depth_callback(self, msg: Image):
         depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
-        flat_depth = depth_image.flatten()
-
-        df = pd.DataFrame(flat_depth)
-
-        min_val = round(df.min().min(), 2)
-        max_val = round(df.max().max(), 2)
-        mean_val = round(df.mean().mean(), 2)
-        std_val = round(df.std().mean(), 2)
-
-        print(f"Min: {min_val}\t", end="")
-        print(f"Max: {max_val}\t", end="")
-        print(f"Mean: {mean_val}\t", end="")
-        print(f"Std: {std_val}")
+        print(f"Depth image dtype: {depth_image.dtype}")
 
 
 def main():

@@ -36,11 +36,33 @@ import os
 import sys
 import numpy as np
 import time
+import tqdm
+from scipy.spatial.transform import Rotation as R
 
 # Custom
 from object_tracker.real_time_tracking_client import MegaPoseClient
 from base_package.header import QuaternionAngle
 from object_tracker.real_time_segmentation import RealTimeSegmentationNode
+
+
+class Queue(object):
+    def __init__(self, max_size=10):
+        self.max_size = max_size
+        self.queue = []
+
+    def push(self, item):
+        if len(self.queue) >= self.max_size:
+            self.queue.pop(0)
+        self.queue.append(item)
+
+    def get(self):
+        return self.queue
+
+    def get_average(self):
+        if len(self.queue) != self.max_size:
+            return 0.0
+
+        return np.mean(self.queue, axis=0)
 
 
 class MegaPoseEstimator(MegaPoseClient):
@@ -91,13 +113,6 @@ class MegaPoseEstimator(MegaPoseClient):
         self.clss = {v: k for k, v in self.names.items()}
 
         self.detected_data = {
-            # "labels": ["alive", "green_tea"],
-            # "detections": [
-            #     list(map(int, [352.0, 261.0, 404.0, 392.0])),
-            #     list(map(int, [475.0, 234.0, 514.0, 359.0])),
-            # ],
-            # "labels": ["alive"],
-            # "detections": [list(map(int, [352.0, 261.0, 404.0, 392.0]))],
             "labels": [],
             "detections": [],
             "use_depth": False,
@@ -157,6 +172,9 @@ class MegaPoseEstimator(MegaPoseClient):
             return None
 
         K = np.array(msg.k).reshape(3, 3)
+
+        self.node.get_logger().info(f"\nOriginal K: {K}")
+
         image_size = (msg.height, msg.width)
 
         if msg.height == self.height and msg.width == self.width:
@@ -166,10 +184,7 @@ class MegaPoseEstimator(MegaPoseClient):
         elif msg.height == 720 and msg.width == 1280:
             image_size = (self.height, self.width)
 
-            h, w = 720, 1280
-            crop_w, crop_h = 640, 480
-            start_x = int((w - crop_w) // 2.05)
-            start_y = int((h - crop_h) // 2.7)
+            K = K.copy()
 
             # offset = int((msg.width - self.width) // 2)
 
@@ -178,7 +193,11 @@ class MegaPoseEstimator(MegaPoseClient):
             # K[0, 2] = (K[0, 2] - offset) * (self.width / msg.width)
             # K[1, 2] = K[1, 2] * (self.height / msg.height)
 
-            K = K.copy()
+            h, w = 720, 1280
+            crop_w, crop_h = 640, 480
+            start_x = int((w - crop_w) // 2.05)
+            start_y = int((h - crop_h) // 2.7)
+
             K[0, 2] -= start_x
             K[1, 2] -= start_y
 
@@ -192,7 +211,10 @@ class MegaPoseEstimator(MegaPoseClient):
             image_size=image_size,
         )
 
-        print(image_size)
+        self.node.get_logger().info("Set intrinsics successfully.")
+        self.node.get_logger().info(f"\nK: {K}")
+        self.node.get_logger().info(f"\nImage Size: {msg.height}, {msg.width}")
+
         self.intrinsics_flag = True
 
 
@@ -206,7 +228,8 @@ class ObjectPoseEstimator(Node):
         # <<< Instance Variables
 
         # >>> Data
-        self.image = None
+        self.image: Image = None
+        self.depth_image: Image = None
 
         resource_dir = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "..", "resource"
@@ -217,6 +240,13 @@ class ObjectPoseEstimator(Node):
         # <<< Data
 
         # >>> Subscribers
+
+        self.depth_image_subscriber = self.create_subscription(
+            Image,
+            "/camera/camera1/depth/image_rect_raw",
+            self.depth_image_callback,
+            qos_profile=qos_profile_system_default,
+        )
         self.image_subscriber = self.create_subscription(
             Image,
             "/camera/camera1/color/image_raw",
@@ -231,9 +261,18 @@ class ObjectPoseEstimator(Node):
         )
         # <<< Subscribers
 
+        self.test = self.create_publisher(
+            Image,
+            "/test",
+            qos_profile=qos_profile_system_default,
+        )
+
     # >>> Callbacks
     def image_callback(self, msg: Image):
         self.image = msg
+
+    def depth_image_callback(self, msg: Image):
+        self.depth_image = msg
 
     def megapose_request_callback(
         self, request: MegaposeRequest.Request, response: MegaposeRequest.Response
@@ -244,57 +283,227 @@ class ObjectPoseEstimator(Node):
             self.get_logger().warn("No image received.")
             return response
 
-        np_image = self.bridge.imgmsg_to_cv2(self.image, desired_encoding="bgr8")
-        np_image = RealTimeSegmentationNode.crop_image(np_image)
-
         # TODO
-
-        """
-            self.detected_data = {
-            # "labels": ["alive", "green_tea"],
-            # "detections": [
-            #     list(map(int, [352.0, 261.0, 404.0, 392.0])),
-            #     list(map(int, [475.0, 234.0, 514.0, 359.0])),
-            # ],
-            # "labels": ["alive"],
-            # "detections": [list(map(int, [352.0, 261.0, 404.0, 392.0]))],
-            "labels": [],
-            "detections": [],
-            "use_depth": False,
-        }
-        """
         labels = self.tracking_client.detected_data["labels"]
         detections = self.tracking_client.detected_data["detections"]
 
         response_msg = BoundingBox3DMultiArray()
         for label, detection in zip(labels, detections):
-            data = {
-                "detections": [
-                    [
-                        int(detection[0] - 5),
-                        int(detection[1] - 5),
-                        int(detection[2] + 5),
-                        int(detection[3] + 5),
+
+            with tqdm.tqdm(total=10) as pbar:
+                for attempt in range(10):
+                    np_image = self.bridge.imgmsg_to_cv2(
+                        self.image, desired_encoding="bgr8"
+                    )
+                    np_image = RealTimeSegmentationNode.crop_image(np_image)
+
+                    np_depth_image = self.bridge.imgmsg_to_cv2(
+                        self.depth_image, desired_encoding="passthrough"
+                    )
+                    np_depth_image = RealTimeSegmentationNode.crop_image(np_depth_image)
+
+                    offset = np.random.randint(0, 5)
+                    detections = [
+                        [
+                            int(
+                                np.clip(
+                                    detection[0] - (offset * 2),
+                                    0,
+                                    640,
+                                )
+                            ),
+                            int(
+                                np.clip(
+                                    detection[1] - (offset * 2),
+                                    0,
+                                    480,
+                                )
+                            ),
+                            int(
+                                np.clip(
+                                    detection[2] + (offset * 2),
+                                    0,
+                                    640,
+                                )
+                            ),
+                            int(
+                                np.clip(
+                                    detection[3] + (offset * 2),
+                                    0,
+                                    480,
+                                )
+                            ),
+                        ]
                     ]
-                ],
-                "labels": [label],
-                "use_depth": False,
-            }
 
-            self.get_logger().info(f"Requesting: {label}")
-            results = self.tracking_client.send_pose_request(
-                image=np_image, json_data=data
-            )
+                    zero_depth_image = np.zeros_like(np_depth_image)
+                    zero_depth_image[
+                        detection[0] : detection[2], detection[1] : detection[3]
+                    ] = np_depth_image[
+                        detection[0] : detection[2], detection[1] : detection[3]
+                    ]
 
-            if results is None:
-                self.get_logger().warn(f"Failed to get results for {label}")
-                continue
+                    data = {
+                        "detections": detections,
+                        "labels": [label],
+                        "use_depth": True,
+                        "refiner_iterations": 5,
+                        "depth_scale_to_m": 0.001,
+                    }
 
-            bbox_3d = self.post_process_result(results[0], label)
+                    results = self.tracking_client.send_pose_request_rgbd(
+                        image=np_image, depth=zero_depth_image, json_data=data
+                    )
 
-            if bbox_3d is not None:
-                response_msg.data.append(bbox_3d)
-                self.get_logger().info(f"Response: {bbox_3d}")
+                    cTo = results[0]["cTo"]
+                    bbox = results[0]["boundingBox"]
+                    score = results[0]["score"]
+                    temp_average = 0.0
+
+                    rotation_matrix = np.array(cTo).reshape(4, 4)[:3, :3]
+                    rot = R.from_matrix(rotation_matrix)
+
+                    z_world = np.array([0, 0, 1])
+                    y_axis = rot.apply([0, 1, 0])
+
+                    cosine_angle = np.clip(np.dot(y_axis, z_world), -1.0, 1.0)
+                    angle_deg = np.abs(np.degrees(np.arccos(cosine_angle)) - 90.0)
+
+                    self.get_logger().info(
+                        f"{label}({attempt}): {score:.3f}/{angle_deg:.2f}"
+                    )
+
+                    pbar.update(1)
+                    pbar.set_description(
+                        f"{label}({attempt}): {score:.3f}/{angle_deg:.2f}"
+                    )
+
+                    flag = False
+                    if score > 0.999 and angle_deg < 5.0:
+                        result_img = np_image.copy()
+                        cv2.rectangle(
+                            result_img,
+                            (int(bbox[0]), int(bbox[1])),
+                            (int(bbox[2]), int(bbox[3])),
+                            (0, 255, 0),
+                            2,
+                        )
+                        cv2.rectangle(
+                            result_img,
+                            (int(detections[0][0]), int(detections[0][1])),
+                            (int(detections[0][2]), int(detections[0][3])),
+                            (255, 0, 0),
+                            2,
+                        )
+
+                        self.test.publish(self.bridge.cv2_to_imgmsg(result_img, "bgr8"))
+                        flag = True
+
+                    elif score > 0.95:
+                        temp_queue = Queue(max_size=10)
+
+                        with tqdm.tqdm(total=100) as pbar2:
+                            for _ in range(100):
+                                np_image = self.bridge.imgmsg_to_cv2(
+                                    self.image, desired_encoding="bgr8"
+                                )
+                                np_image = RealTimeSegmentationNode.crop_image(np_image)
+
+                                np_depth_image = self.bridge.imgmsg_to_cv2(
+                                    self.depth_image, desired_encoding="passthrough"
+                                )
+                                np_depth_image = RealTimeSegmentationNode.crop_image(
+                                    np_depth_image
+                                )
+
+                                zero_depth_image = np.zeros_like(np_depth_image)
+                                zero_depth_image[
+                                    detection[0] + 3 : detection[2] - 3,
+                                    detection[1] + 3 : detection[3] - 3,
+                                ] = np_depth_image[
+                                    detection[0] + 3 : detection[2] - 3,
+                                    detection[1] + 3 : detection[3] - 3,
+                                ]
+
+                                temp_data = {
+                                    "detections": detections,
+                                    "initial_cTos": [cTo],
+                                    "labels": [label],
+                                    "refiner_iterations": 5,
+                                    "use_depth": True,
+                                    "depth_scale_to_m": 0.001,
+                                }
+
+                                temp_results = (
+                                    self.tracking_client.send_pose_request_rgbd(
+                                        image=np_image,
+                                        depth=zero_depth_image,
+                                        json_data=temp_data,
+                                    )
+                                )
+
+                                temp_score = temp_results[0]["score"]
+                                bbox = temp_results[0]["boundingBox"]
+                                cTo = temp_results[0]["cTo"]
+
+                                rotation_matrix = np.array(cTo).reshape(4, 4)[:3, :3]
+                                rot = R.from_matrix(rotation_matrix)
+
+                                z_world = np.array([0, 0, 1])
+                                y_axis = rot.apply([0, 1, 0])
+
+                                cosine_angle = np.clip(
+                                    np.dot(y_axis, z_world), -1.0, 1.0
+                                )
+                                angle_deg = np.abs(
+                                    np.degrees(np.arccos(cosine_angle)) - 90.0
+                                )
+
+                                temp_queue.push(temp_score)
+                                temp_average = temp_queue.get_average()
+
+                                self.get_logger().info(
+                                    f"{label}({attempt}): {temp_average:.3f}/{angle_deg:.2f}"
+                                )
+
+                                pbar2.update(1)
+                                pbar2.set_description(
+                                    f"{label}({attempt})-SEG: {temp_average:.3f}/{angle_deg:.2f}"
+                                )
+
+                                result_img = np_image.copy()
+                                cv2.rectangle(
+                                    result_img,
+                                    (int(bbox[0]), int(bbox[1])),
+                                    (int(bbox[2]), int(bbox[3])),
+                                    (0, 255, 0),
+                                    2,
+                                )
+                                cv2.rectangle(
+                                    result_img,
+                                    (int(detections[0][0]), int(detections[0][1])),
+                                    (int(detections[0][2]), int(detections[0][3])),
+                                    (255, 0, 0),
+                                    2,
+                                )
+
+                                self.test.publish(
+                                    self.bridge.cv2_to_imgmsg(result_img, "bgr8")
+                                )
+
+                                if temp_average > 0.98 and angle_deg < 5.0:
+                                    flag = True
+                                    results = temp_results
+                                    break
+
+                    if flag:
+                        bbox_3d = self.post_process_result(results[0], label)
+                        response_msg.data.append(bbox_3d)
+
+                        pbar.close()
+                        break
+
+        self.get_logger().info(f"Response: {len(response_msg.data)}")
 
         response.response = response_msg
 
@@ -305,15 +514,10 @@ class ObjectPoseEstimator(Node):
     def post_process_result(self, result: dict, label: str) -> BoundingBox3D:
         score = result["score"]
         cTo_matrix = np.array(result["cTo"]).reshape(4, 4)
-
         cls = self.tracking_client.clss[label]
 
-        if score < self.tracking_client.score_threshold:
-            self.get_logger().warn(f"Score is lower than threshold: {score}, {label}")
-            return None
-
         offset_matrix = np.zeros((4, 4))
-        offset_matrix[0, 3] = 0.06
+        offset_matrix[0, 3] = 0.06  # TODO: Change this value
         cTo_matrix += offset_matrix
 
         cTo_matrix_ros = QuaternionAngle.transform_realsense_to_ros(cTo_matrix)
@@ -328,7 +532,7 @@ class ObjectPoseEstimator(Node):
         bbox_3d = BoundingBox3D(
             # id=object_id,
             cls=cls,  # black
-            conf=result["score"],
+            conf=score,
             pose=Pose(
                 position=Point(**dict(zip(["x", "y", "z"], translation_matrix))),
                 orientation=Quaternion(

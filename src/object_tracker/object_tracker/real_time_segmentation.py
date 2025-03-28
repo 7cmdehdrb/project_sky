@@ -76,11 +76,32 @@ class RealTimeSegmentationNode(Node):
             os.path.dirname(os.path.abspath(__file__)), "..", "resource"
         )
 
+        self.names = {
+            "cup_1": "cup_sky",
+            "cup_2": "cup_white",
+            "cup_3": "cup_blue",
+            "mug_1": "mug_black",
+            "mug_2": "mug_gray",
+            "mug_3": "mug_yello",
+            "bottle_1": "alive",
+            "bottle_2": "green_tea",
+            "bottle_3": "yello_smoothie",
+            "can_1": "coca_cola",
+            "can_2": "cyder",
+            "can_3": "yello_peach",
+        }
+
         with open(
             os.path.join(resource_dir, "sim_stats.json"),
             "r",
         ) as f:
             self.stat = json.load(f)
+
+        with open(
+            os.path.join(resource_dir, "obj_bounds.json"),
+            "r",
+        ) as f:
+            self.obj_bounds = json.load(f)
 
         self.conf_threshold = 0.7
         self.color_dict = {
@@ -214,6 +235,22 @@ class RealTimeSegmentationNode(Node):
             if conf < self.conf_threshold:
                 continue
 
+            detected_ratio = abs(x1 - x2) / abs(y1 - y2)
+
+            desired_data = self.obj_bounds[self.names[cls]]
+            p = (float(desired_data["x"]) + float(desired_data["z"])) / 2.0
+            c = float(desired_data["y"])
+            desired_ratio = p / c
+
+            difference_ratio = (
+                detected_ratio / desired_ratio
+                if detected_ratio > desired_ratio
+                else desired_ratio / detected_ratio
+            )
+
+            if difference_ratio > 1.2:
+                continue
+
             bboxes.data.append(
                 BoundingBox(
                     id=int(np_cls[idx]),
@@ -229,6 +266,7 @@ class RealTimeSegmentationNode(Node):
                 (int(x1), int(y1)),
                 (int(x2), int(y2)),
                 self.color_dict[int(np_cls[idx])],
+                # color,
                 2,
             )
             cv2.putText(

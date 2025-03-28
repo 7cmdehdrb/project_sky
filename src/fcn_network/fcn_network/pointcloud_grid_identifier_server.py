@@ -194,20 +194,7 @@ class PointCloudGridIdentifier(Node):
             self.fcn_occupied_request_callback,
         )
 
-<<<<<<< HEAD:src/fcn_network/fcn_network/pointcloud_grid_identifier.py
-        self.srv = self.create_service(
-            FCNOccupiedRequest, "fcn_occupied_request", self.fcn_request_callback
-        )
-
-        self.command_text_publisher = self.create_publisher(
-            String,
-            "/hello",
-            qos_profile_system_default,
-        )
-        self.command_text = "No command is given."
-=======
         self.pointcloud_msg: PointCloud2 = None
->>>>>>> main:src/fcn_network/fcn_network/pointcloud_grid_identifier_server.py
 
         self.get_logger().info("Pointcloud Grid Identifier Node has been initialized.")
         # <<< ROS
@@ -305,15 +292,6 @@ class PointCloudGridIdentifier(Node):
 
         action = "Sweaping" if response.action else "Grasping"
 
-<<<<<<< HEAD:src/fcn_network/fcn_network/pointcloud_grid_identifier.py
-        # self.command_text = f"{action} from {response.moving_row}{int(request.target_col)} \
-        #             to {response.moving_row}{response.moving_cols.tolist()}"
-        self.command_text = (
-            f"Remove the object at {response.moving_row}{int(request.target_col)}"
-        )
-
-=======
->>>>>>> main:src/fcn_network/fcn_network/pointcloud_grid_identifier_server.py
         self.get_logger().info(
             f"Response: {action} {response.moving_row}{response.moving_cols}"
         )
@@ -352,13 +330,9 @@ class PointCloudGridIdentifier(Node):
         return grids, grids_dict
 
     def publish_grid_marker(self):
-<<<<<<< HEAD:src/fcn_network/fcn_network/pointcloud_grid_identifier.py
-        self.command_text_publisher.publish(String(data=self.command_text))
-=======
         if self.pointcloud_msg is None:
             self.get_logger().warn("No pointcloud message to process")
             return None
->>>>>>> main:src/fcn_network/fcn_network/pointcloud_grid_identifier_server.py
 
         header = Header(frame_id="camera1_link", stamp=self.get_clock().now().to_msg())
 

@@ -24,3 +24,12 @@ ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.ena
 ros2 run tf2_ros static_transform_publisher 0.03 -0.44 0.45 0.0 0.0 0.7071 0.7071 world camera1_link
 
 source ~/.bashrc
+
+
+SciR -> 계정을 구매하는 것을 고려중
+SoftR -> RISS로 검색하면 21~22년 정보는 무료로 제공됨. 그 이외는 다시 말해야 함.
+
+ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.enable:=true rgb_camera.color_profile:="1280,720,30" depth_module.depth_profile:="1280,720,30"
+
+
+ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.enable:=true rgb_camera.color_profile:="640,480,30" depth_module.depth_profile:="640,480,30"

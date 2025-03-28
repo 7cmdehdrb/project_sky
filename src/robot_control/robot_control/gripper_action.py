@@ -30,11 +30,7 @@ class GripperActionClient(object):
 
         self._action_client.wait_for_server()
 
-<<<<<<< HEAD
         future: Future = self._action_client.send_goal_async(
-=======
-        future: Future = self._action_client.send_goal(
->>>>>>> main
             goal_msg, feedback_callback=self.feedback_callback
         )
         future.add_done_callback(self.goal_response_callback)

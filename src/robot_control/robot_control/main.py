@@ -204,9 +204,30 @@ class MainControlNode(object):
             node=self._node, buffer=self.tf_buffer, tf_listener=self.tf_listener
         )
 
+        self.names = {
+            "cup_1": "cup_sky",
+            "cup_2": "cup_white",
+            "cup_3": "cup_blue",
+            "mug_1": "mug_black",
+            "mug_2": "mug_gray",
+            "mug_3": "mug_yello",
+            "bottle_1": "alive",
+            "bottle_2": "green_tea",
+            "bottle_3": "yello_smoothie",
+            "can_1": "coca_cola",
+            "can_2": "cyder",
+            "can_3": "yello_peach",
+        }
+
+        self.target_cls = "bottle_2"
+        self.test_pub = self._node.create_publisher(
+            String,
+            "/fcn_target_cls",
+            qos_profile=qos_profile_system_default,
+        )
         self.test_sub = self._node.create_subscription(
             String,
-            "result_fcn_target",
+            "/fcn_target_result",
             self.test_callback,
             qos_profile=qos_profile_system_default,
         )
@@ -294,7 +315,7 @@ class MainControlNode(object):
         if current_row is None and current_col is None:
             txt = msg.data
             row, col = txt.split(",")
-            self.fcn_result = [col, row]  # A, 1
+            self.fcn_result = [row, col]  # A, 1
             self._node.get_logger().info(f"FCN Result: {self.fcn_result}")
 
     def gripper_joint_callback(self, msg: JointState):
@@ -328,6 +349,9 @@ class MainControlNode(object):
                 return False
 
         elif self.state == State.FCN_SEARCHING:
+            self._node.get_logger().info(f"Requesting Target Class: {self.target_cls}")
+            self.test_pub.publish(String(data=self.target_cls))
+
             row, col = self.fcn_result
             if row is not None and col is not None:
                 self.target_object = self._object_selector.get_target_object(

@@ -199,6 +199,50 @@ class MegaPoseClient:
         length = struct.unpack(">I", buffer.read(4))[0]
         return buffer.read(length).decode("utf-8")
 
+    def send_pose_request_rgbd(
+        self, image: np.ndarray, depth: np.ndarray, json_data: dict
+    ):
+        if image.shape[-1] == 3:
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        # RGB image
+        height, width, channels = image.shape
+        img_shape_bytes = struct.pack(">3I", height, width, channels)
+        img_bytes = image.tobytes()
+
+        # JSON
+        json_str = json.dumps(json_data)
+        json_bytes = self.pack_string(json_str)
+
+        # Depth image
+        assert depth.dtype == np.uint16
+        assert depth.shape == (height, width)
+        depth_shape_bytes = struct.pack(">2I", height, width)  # only height & width
+        endianness_byte = struct.pack("c", b">")  # big endian
+        depth_bytes = depth.tobytes()
+
+        # 최종 데이터 조합
+        data = (
+            img_shape_bytes
+            + img_bytes
+            + json_bytes
+            + depth_shape_bytes
+            + endianness_byte
+            + depth_bytes
+        )
+
+        # Send and receive
+        self.send_message(self.socket, MegaPoseClient.ServerMessage.GET_POSE, data)
+        code, response_buffer = self.receive_message(self.socket)
+
+        if code == MegaPoseClient.ServerMessage.RET_POSE:
+            return json.loads(self.read_string(response_buffer))
+        elif code == MegaPoseClient.ServerMessage.ERR:
+            print("Error from server:", self.read_string(response_buffer))
+        else:
+            print("Unknown response code:", code)
+        return None
+
     def send_pose_request(self, image: np.ndarray, json_data: dict):
         # **(1) RGB 이미지를 전송할 수 있도록 BGR → RGB 변환**
         if image.shape[-1] == 3:
