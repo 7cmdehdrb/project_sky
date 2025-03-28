@@ -1,3 +1,10 @@
+# Python
+import os
+import sys
+import json
+import numpy as np
+import argparse
+
 # ROS2
 import rclpy
 from rclpy.node import Node
@@ -16,192 +23,70 @@ from custom_msgs.srv import FCNOccupiedRequest
 # TF
 from tf2_ros import *
 
-# Python
-import os
-import sys
-import json
-import numpy as np
+# Custom
 from base_package.header import PointCloudTransformer, QuaternionAngle
+from base_package.manager import ObjectManager
+from fcn_network.fcn_manager import GridManager
 
 
 class PointCloudGridIdentifier(Node):
-    class Grid(object):
-        def __init__(
-            self,
-            row_id: str,
-            col_id: int,
-            center_coord: Point,
-            size: Vector3,
-            threshold: int = 1000,
-        ):
-            self.row_id = row_id
-            self.col_id = col_id
-            self.center_coord = center_coord
-            self.size = size
-            self.threshold = threshold
-
-            self.points = 0
-            self.is_occupied = False
-
-        def set_state(self, state: bool = None):
-            if state is not None:
-                self.is_occupied = state
-                return self.is_occupied
-
-            self.is_occupied = self.points > self.threshold
-            return self.is_occupied
-
-        def get_state(self):
-            return self.points > self.threshold
-
-        def slice(self, points: np.array):
-            xrange = (
-                self.center_coord.x - (self.size.x / 2) * 0.9,
-                self.center_coord.x + (self.size.x / 2) * 0.9,
-            )
-            yrange = (
-                self.center_coord.y - (self.size.y / 2) * 0.9,
-                self.center_coord.y + (self.size.y / 2) * 0.9,
-            )
-            zrange = (
-                self.center_coord.z - (self.size.z / 2) * 0.9,
-                self.center_coord.z + (self.size.z / 2) * 0.9,
-            )
-
-            points_in_grid: np.ndarray = PointCloudTransformer.ROI_Color_filter(
-                points,
-                ROI=True,
-                x_range=xrange,
-                y_range=yrange,
-                z_range=zrange,
-                rgb=False,
-            )
-
-            self.points = points_in_grid.shape[0]
-
-        def get_marker(self, header: Header):
-            marker = Marker(
-                header=header,
-                ns=f"{self.row_id}{self.col_id}",
-                id=((ord(self.row_id) - 64) * 10) + self.col_id,
-                type=Marker.CUBE,
-                action=Marker.ADD,
-                pose=Pose(
-                    position=self.center_coord,
-                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
-                scale=Vector3(
-                    x=self.size.x * 0.9,
-                    y=self.size.y * 0.8,
-                    # z=0.01,
-                    z=self.size.z,
-                ),
-                color=ColorRGBA(
-                    r=1.0 if self.points > self.threshold else 0.0,
-                    g=0.0 if self.points > self.threshold else 1.0,
-                    b=0.0,
-                    a=0.5,
-                ),
-            )
-
-            return marker
-
-        def get_text_marker(self, header: Header):
-            temp_center_coord = Point(
-                x=self.center_coord.x, y=self.center_coord.y, z=self.center_coord.z
-            )
-            temp_center_coord.z = -0.15
-
-            marker = Marker(
-                header=header,
-                ns=f"{self.row_id}{self.col_id}_text",
-                id=((ord(self.row_id) - 64) * 10) + self.col_id + 100,
-                type=Marker.TEXT_VIEW_FACING,
-                action=Marker.ADD,
-                pose=Pose(
-                    position=temp_center_coord,
-                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
-                scale=Vector3(
-                    x=0.0,
-                    y=0.0,
-                    z=0.01,
-                ),
-                color=ColorRGBA(r=1.0, g=1.0, b=1.0, a=0.7),
-                text=f"{self.row_id}{self.col_id}\t{int(self.points)}",
-                # text=f"{int(self.points)}",
-            )
-
-            return marker
-
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         super().__init__("pointcloud_grid_identifier_node")
 
-        # >>> Parameters File
-        package_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "../resource")
-        )
+        # >>> Grid Manager >>>
+        self._grid_manager = GridManager(self, *args, **kwargs)
 
-        grid_data_path = os.path.join(package_path, "grid_data.json")
-        with open(grid_data_path, "r") as f:
-            self.grid_data = json.load(f)
-        # <<< Parameters File
+        self._grid_data = self._grid_manager.get_grid_data()
+        self._grids, self._grids_dict = self._grid_manager.create_grid()
+        # <<< Grid Manager <<<
 
-        # >>> Grid Parameters
+        # >>> Grid Parameters >>>
+        self._rows = self._grid_data["rows"]  # ["A", "B", "C"]
+        self._cols = self._grid_data["columns"]  # [0, 1, 2, 3]
 
-        # ["A", "B", "C"] : A -> Front(-), C -> Back(+)
-        self.rows = self.grid_data["rows"]
-        # [0, 1, 2, 3] : Left(+) -> Right(-)
-        self.cols = self.grid_data["columns"]
+        grid_identifier = self._grid_data["grid_identifier"]
 
-        grid_identifier = self.grid_data["grid_identifier"]
-        self.grid_size = Vector3(
+        self._grid_size = Vector3(
             x=grid_identifier["grid_size"]["x"],
             y=grid_identifier["grid_size"]["y"],
             z=grid_identifier["grid_size"]["z"],
         )
-        self.start_center_coord = Point(
+        self._start_center_coord = Point(
             x=grid_identifier["start_center_coord"]["x"],
             y=grid_identifier["start_center_coord"]["y"],
             z=grid_identifier["start_center_coord"]["z"],
         )
-        self.point_threshold = grid_identifier["point_threshold"]
+        self._point_threshold = grid_identifier["point_threshold"]
+        # <<< Grid Parameters <<<
 
-        self.grids, self.grids_dict = self.create_grid(
-            rows=self.rows,
-            cols=self.cols,
-            grid_size=self.grid_size,
-            start_center_coord=self.start_center_coord,
-        )
-
-        # <<< Grid Parameters
-
-        # >>> ROS
-        self.pointcloud_subscriber = self.create_subscription(
+        # >>> ROS >>>
+        self._pointcloud_subscriber = self.create_subscription(
             PointCloud2,
             "/camera/camera1/depth/color/points",  # TODO: Change the topic
             self.pointcloud_callback,
             qos_profile_system_default,
         )
-        self.grid_marker_publisher = self.create_publisher(
+        self._grid_marker_publisher = self.create_publisher(
             MarkerArray,
             self.get_name() + "/grids",
             qos_profile_system_default,
         )
-        self.srv = self.create_service(
+        self._srv = self.create_service(
             FCNOccupiedRequest,
             "/fcn_occupied_request",
             self.fcn_occupied_request_callback,
         )
+        # <<< ROS <<<
 
-        self.pointcloud_msg: PointCloud2 = None
+        # >>> Data >>>
+        self._pointcloud_msg: PointCloud2 = None
+        # <<< Data <<<
 
         self.get_logger().info("Pointcloud Grid Identifier Node has been initialized.")
-        # <<< ROS
 
         # >>> Main
         hz = 10
-        self.timer = self.create_timer(float(1.0 / hz), self.publish_grid_marker)
+        self._timer = self.create_timer(float(1.0 / hz), self.publish_grid_marker)
         # <<< Main
 
     def fcn_occupied_request_callback(
@@ -223,13 +108,13 @@ class PointCloudGridIdentifier(Node):
         )
 
         # Update All Grids
-        for col in self.cols:
+        for col in self._cols:
             is_front_grid_occupied = False
-            for row in self.rows:
+            for row in self._rows:
                 grid_id = f"{row}{col}"
 
-                grid = self.grids_dict[grid_id]
-                grid: PointCloudGridIdentifier.Grid
+                grid = self._grids_dict[grid_id]
+                grid: GridManager.Grid
 
                 is_grid_occupied = grid.get_state()
 
@@ -247,25 +132,20 @@ class PointCloudGridIdentifier(Node):
                     is_front_grid_occupied = False
 
         # Get Target col's grid
-        target_grids_id = [f"{row}{request.target_col}" for row in self.rows]
-        target_grids = [self.grids_dict[grid_id] for grid_id in target_grids_id]
+        target_grids_id = [f"{row}{request.target_col}" for row in self._rows]
+        target_grids = [self._grids_dict[grid_id] for grid_id in target_grids_id]
 
         # In target grids, check if there is any occupied grid
         occupied_rows = []
         for grid in target_grids:
-            grid: PointCloudGridIdentifier.Grid
+            grid: GridManager.Grid
 
             if grid.is_occupied:
                 occupied_rows.append(grid.row_id)
 
         # Exception: If there is no occupied grid in target grids
         if len(occupied_rows) == 0:
-            response.action = False
-            response.moving_row = "Z"
-            response.moving_cols = []
-
-            self.get_logger().warn("No occupied grid. Return 'Z'")
-
+            self.get_logger().warn("No occupied grid.")
             return response
 
         # Get Minimum row of the occupied grids
@@ -277,7 +157,7 @@ class PointCloudGridIdentifier(Node):
         # Check if the side grids are empty
         result = []
         for grid_id in side_grids_id:
-            grid: PointCloudGridIdentifier.Grid = self.grids_dict[grid_id]
+            grid: GridManager.Grid = self._grids_dict[grid_id]
 
             # Occupied: False, Empty: True
             result.append((grid, not grid.is_occupied))
@@ -285,7 +165,9 @@ class PointCloudGridIdentifier(Node):
         # Set the response
         response.action = False
         response.moving_row = first_occupied_row
+
         for grid, is_empty in result:
+            grid: GridManager.Grid
             if is_empty:
                 response.action = True
                 response.moving_cols.append(grid.col_id)
@@ -299,45 +181,17 @@ class PointCloudGridIdentifier(Node):
         return response
 
     def pointcloud_callback(self, msg: PointCloud2):
-        self.pointcloud_msg = msg
-
-    def create_grid(self, rows, cols, grid_size: Vector3, start_center_coord: Point):
-        grids = []
-        grids_dict = {}
-
-        for r, row in enumerate(rows):
-            for c, col in enumerate(cols):
-
-                center_coord = Point(
-                    x=start_center_coord.x + grid_size.x * r,
-                    y=start_center_coord.y - grid_size.y * c,
-                    z=start_center_coord.z,
-                )
-
-                grid = self.Grid(
-                    row_id=row,
-                    col_id=col,
-                    center_coord=center_coord,
-                    size=grid_size,
-                    threshold=self.point_threshold,
-                )
-
-                print(f"Grid {row}{col} is created at {center_coord}")
-
-                grids.append(grid)
-                grids_dict[f"{row}{col}"] = grid
-
-        return grids, grids_dict
+        self._pointcloud_msg = msg
 
     def publish_grid_marker(self):
-        if self.pointcloud_msg is None:
+        if self._pointcloud_msg is None:
             self.get_logger().warn("No pointcloud message to process")
             return None
 
         header = Header(frame_id="camera1_link", stamp=self.get_clock().now().to_msg())
 
         points = PointCloudTransformer.pointcloud2_to_numpy(
-            msg=self.pointcloud_msg, rgb=False
+            msg=self._pointcloud_msg, rgb=False
         )
         transform_matrix = QuaternionAngle.transform_realsense_to_ros(np.eye(4))
         transformed_points = PointCloudTransformer.transform_pointcloud(
@@ -345,8 +199,8 @@ class PointCloudGridIdentifier(Node):
         )
 
         marker_array = MarkerArray()
-        for grid in self.grids:
-            grid: PointCloudGridIdentifier.Grid
+        for grid in self._grids:
+            grid: GridManager.Grid
 
             grid.slice(transformed_points)
 
@@ -356,14 +210,25 @@ class PointCloudGridIdentifier(Node):
             text_marker = grid.get_text_marker(header)
             marker_array.markers.append(text_marker)
 
-        self.grid_marker_publisher.publish(marker_array)
+        self._grid_marker_publisher.publish(marker_array)
 
 
 def main():
-
     rclpy.init(args=None)
 
-    node = PointCloudGridIdentifier()
+    parser = argparse.ArgumentParser(description="FCN Server Node")
+    parser.add_argument(
+        "--grid_data_file",
+        type=str,
+        required=True,
+        default="grid_data.json",
+        help="Path or file name of the grid data. If input is a file name, the file should be located in the 'resource' directory. Required",
+    )
+
+    args = parser.parse_args()
+    kagrs = vars(args)
+
+    node = PointCloudGridIdentifier(**kagrs)
 
     rclpy.spin(node)
 

@@ -21,61 +21,49 @@ from tf2_ros import *
 import numpy as np
 import sys
 import os
-
-from fcn_network.fcn_server import FCNClassNames, get_class_name
 import array
+from base_package.manager import ObjectManager
 
 
 class FCNClientNode(Node):
     def __init__(self):
         super().__init__("fcn_client_node")
 
-        self.cls_names = [
-            "bottle_1",
-            "bottle_2",
-            "bottle_3",
-            "can_1",
-            "can_2",
-            "can_3",
-            "cup_1",
-            "cup_2",
-            "cup_3",
-            "mug_1",
-            "mug_2",
-            "mug_3",
-        ]
+        # >>> Manager >>>
+        self._object_manager = ObjectManager()
+        # <<< Manager <<<
 
         # >>> Service Responses
-        self.fcn_response: FCNRequest.Response = None
-        self.fcn_occupied_response: FCNOccupiedRequest.Response = None
+        self._fcn_response: FCNRequest.Response = None
+        self._fcn_occupied_response: FCNOccupiedRequest.Response = None
         # <<< Service Responses
 
         # >>> Service Clients
-        self.fcn_client = self.create_client(FCNRequest, "/fcn_request")
-        self.fcn_occupied_client = self.create_client(
+        self._fcn_client = self.create_client(FCNRequest, "/fcn_request")
+        self._fcn_occupied_client = self.create_client(
             FCNOccupiedRequest, "/fcn_occupied_request"
         )
         # <<< Service Clients
 
-        # >> ROS
-        self.trigger_subscription = self.create_subscription(
+        # >> ROS >>>
+        self._trigger_subscription = self.create_subscription(
             String,
             "/fcn_target_cls",
             self.trigger_callback,
             qos_profile=qos_profile_system_default,
         )
-        self.result_publisher = self.create_publisher(
+        self._result_publisher = self.create_publisher(
             String, "/fcn_target_result", qos_profile=qos_profile_system_default
         )
-        self.target_cls = None
-        # <<< ROS
+        self._target_cls: str = None
+        # <<< ROS <<<
 
-        while not self.fcn_client.wait_for_service(timeout_sec=1.0):
+        while not self._fcn_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().warn(
                 f"Service called fcn_request not available, waiting again..."
             )
 
-        while not self.fcn_occupied_client.wait_for_service(timeout_sec=1.0):
+        while not self._fcn_occupied_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().warn(
                 f"Service called fcn_occupied_request not available, waiting again..."
             )
@@ -85,8 +73,8 @@ class FCNClientNode(Node):
         self.create_timer(1.0, self.run)
 
     def trigger_callback(self, msg: String):
-        if msg.data in self.cls_names:
-            self.target_cls = msg.data
+        if msg.data in self._object_manager.names.keys():
+            self._target_cls = msg.data
             self.get_logger().info(f"Received class name: {msg.data}")
         else:
             self.get_logger().warn(f"Invalid class name: {msg.data}")
@@ -94,11 +82,8 @@ class FCNClientNode(Node):
     def send_fcn_request(self, target_cls: str):
         request = FCNRequest.Request()
         request.target_cls = target_cls
-        future: Future = self.fcn_client.call_async(request)
+        future: Future = self._fcn_client.call_async(request)
         future.add_done_callback(self.fcn_response_callback)
-
-    def fcn_response_callback(self, future: Future):
-        self.fcn_response = future.result()
 
     def send_fcn_occupied_request(self, fcn_response: FCNRequest.Response):
         request = FCNOccupiedRequest.Request()
@@ -113,41 +98,42 @@ class FCNClientNode(Node):
         request.empty_cols = empty_cols
         request.target_col = target_col
 
-        future: Future = self.fcn_occupied_client.call_async(request)
+        future: Future = self._fcn_occupied_client.call_async(request)
         future.add_done_callback(self.fcn_occupied_response_callback)
+
+    def fcn_response_callback(self, future: Future):
+        self._fcn_response = future.result()
 
     def fcn_occupied_response_callback(self, future: Future):
         self.fcn_occupied_response = future.result()
 
     def run(self):
-        if self.target_cls is None:
+        if self._target_cls is None:
             return None
 
         # >>> STEP 1: Send FCN Request
-        if self.fcn_response is None:
-            self.fcn_response = self.send_fcn_request(self.target_cls)
+        if self._fcn_response is None:
+            self._fcn_response = self.send_fcn_request(self._target_cls)
 
         # >>> STEP 2: Send FCN Occupied Request
-        if self.fcn_response is not None and self.fcn_occupied_response is None:
-            self.fcn_occupied_response = self.send_fcn_occupied_request(
-                self.fcn_response
+        if self._fcn_response is not None and self._fcn_occupied_response is None:
+            self._fcn_occupied_response = self.send_fcn_occupied_request(
+                self._fcn_response
             )
             self.get_logger().info(
-                f"FCN Occupied Response: {self.fcn_occupied_response}"
+                f"FCN Occupied Response: {self._fcn_occupied_response}"
             )
 
         # >>> STEP 3. Post-Process FCN Occupied Response and Publish Results
-        if self.fcn_occupied_response is not None:
-            if self.fcn_occupied_response.moving_cols == "Z":
-                self.get_logger().warn("Invalid moving cols")
-                return None
-
-            response_text = f"{self.fcn_occupied_response.moving_row},{self.fcn_response.target_col}"
+        if self._fcn_occupied_response is not None:
+            response_text = f"{self._fcn_occupied_response.moving_row},{self._fcn_response.target_col}"
             self.get_logger().info(f"Response: {response_text}")
-            self.result_publisher.publish(String(data=response_text))
+            self._result_publisher.publish(String(data=response_text))
 
-            self.fcn_response = None
-            self.fcn_occupied_response = None
+            # >>> STEP 4. Reset
+            self._target_cls = None
+            self._fcn_response = None
+            self._fcn_occupied_response = None
 
 
 def main():
