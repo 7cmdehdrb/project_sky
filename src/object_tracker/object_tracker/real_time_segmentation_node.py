@@ -185,15 +185,12 @@ class RealTimeSegmentationNode(Node):
                 else desired_ratio / detected_ratio
             )
 
-            if difference_ratio > 1.2:
-                continue
-
             # >>> STEP 3. 바운딩 박스 추가
             bboxes.data.append(
                 BoundingBox(
                     id=int(np_cls[idx]),
                     cls=str(cls),
-                    conf=float(conf),
+                    conf=float(conf) if difference_ratio > 1.2 else 0.0,
                     bbox=[x1, y1, x2, y2],
                 )
             )
@@ -204,7 +201,11 @@ class RealTimeSegmentationNode(Node):
                 np_image,
                 (int(x1), int(y1)),
                 (int(x2), int(y2)),
-                self._object_manager.color_dict[int(np_cls[idx])],
+                (
+                    self._object_manager.color_dict[int(np_cls[idx])]
+                    if difference_ratio > 1.2
+                    else (0, 0, 0)
+                ),
                 2,
             )
             cv2.putText(
@@ -213,7 +214,11 @@ class RealTimeSegmentationNode(Node):
                 org=(int(x1), int(y1 - 10)),
                 fontFace=cv2.FONT_HERSHEY_SIMPLEX,
                 fontScale=0.5,
-                color=self._object_manager.color_dict[int(np_cls[idx])],
+                color=(
+                    self._object_manager.color_dict[int(np_cls[idx])]
+                    if difference_ratio > 1.2
+                    else (0, 0, 0)
+                ),
                 thickness=2,
             )
 

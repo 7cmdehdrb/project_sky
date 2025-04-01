@@ -1,90 +1,161 @@
-import numpy as np
-import sensor_msgs_py.point_cloud2 as pc2
-from scipy.spatial.transform import Rotation as R
+# ROS
+from rclpy.time import Time
+
+# Message
 from std_msgs.msg import *
 from geometry_msgs.msg import *
 from sensor_msgs.msg import *
 from nav_msgs.msg import *
 from visualization_msgs.msg import *
+import sensor_msgs_py.point_cloud2 as pc2
+
+# Python
+import numpy as np
+from scipy.spatial.transform import Rotation as R
 
 
 class QuaternionAngle:
     @staticmethod
-    def euler_from_quaternion(quaternion):
+    def euler_from_quaternion(*args, **kwargs) -> tuple:
         """
-        In: [x, y, z, w], Out: roll, pitch, yaw
+        return roll, pitch, yaw
         """
-        x = quaternion[0]
-        y = quaternion[1]
-        z = quaternion[2]
-        w = quaternion[3]
+        if len(args) == 1 and isinstance(args[0], (list, tuple)):
+            # Input is a single list or tuple [x, y, z, w]
+            x, y, z, w = args[0]
+        elif len(args) == 4:
+            # Input is individual arguments x, y, z, w
+            x, y, z, w = args
+        elif all(k in kwargs for k in ("x", "y", "z", "w")):
+            # Input is keyword arguments x, y, z, w
+            x = kwargs["x"]
+            y = kwargs["y"]
+            z = kwargs["z"]
+            w = kwargs["w"]
+        else:
+            raise ValueError(
+                "Invalid input. Provide [x, y, z, w], x, y, z, w, or x=x, y=y, z=z, w=w."
+            )
 
-        sinr_cosp = 2 * (w * x + y * z)
-        cosr_cosp = 1 - 2 * (x * x + y * y)
-        roll = np.arctan2(sinr_cosp, cosr_cosp)
+        quat = R.from_quat([x, y, z, w])
+        roll, pitch, yaw = quat.as_euler("xyz", degrees=False)
 
-        sinp = 2 * (w * y - z * x)
-        pitch = np.arcsin(sinp)
+        # sinr_cosp = 2 * (w * x + y * z)
+        # cosr_cosp = 1 - 2 * (x * x + y * y)
+        # roll = np.arctan2(sinr_cosp, cosr_cosp)
 
-        siny_cosp = 2 * (w * z + x * y)
-        cosy_cosp = 1 - 2 * (y * y + z * z)
-        yaw = np.arctan2(siny_cosp, cosy_cosp)
+        # sinp = 2 * (w * y - z * x)
+        # pitch = np.arcsin(sinp)
+
+        # siny_cosp = 2 * (w * z + x * y)
+        # cosy_cosp = 1 - 2 * (y * y + z * z)
+        # yaw = np.arctan2(siny_cosp, cosy_cosp)
 
         return roll, pitch, yaw
 
     @staticmethod
-    def quaternion_from_euler(roll, pitch, yaw):
+    def euler_from_rotation_matrix(rotation_matrix: np.ndarray):
         """
-        In: roll, pitch, yaw, Out: x, y, z, w
+        return roll, pitch, yaw
         """
-        qx = np.sin(roll / 2) * np.cos(pitch / 2) * np.cos(yaw / 2) - np.cos(
-            roll / 2
-        ) * np.sin(pitch / 2) * np.sin(yaw / 2)
-        qy = np.cos(roll / 2) * np.sin(pitch / 2) * np.cos(yaw / 2) + np.sin(
-            roll / 2
-        ) * np.cos(pitch / 2) * np.sin(yaw / 2)
-        qz = np.cos(roll / 2) * np.cos(pitch / 2) * np.sin(yaw / 2) - np.sin(
-            roll / 2
-        ) * np.sin(pitch / 2) * np.cos(yaw / 2)
-        qw = np.cos(roll / 2) * np.cos(pitch / 2) * np.cos(yaw / 2) + np.sin(
-            roll / 2
-        ) * np.sin(pitch / 2) * np.sin(yaw / 2)
+        if rotation_matrix.shape != (3, 3):
+            raise ValueError("Input rotation matrix must be a 3x3 numpy array.")
 
-        return qx, qy, qz, qw
-
-    @staticmethod
-    def euler_from_rotation_matrix(rotation_matrix):
-        """
-        In: rotation_matrix, Out: roll, pitch, yaw
-        """
-        # 회전 행렬을 scipy의 Rotation 객체로 변환
         rotation = R.from_matrix(rotation_matrix)
-
-        # Roll, Pitch, Yaw 추출 (XYZ 순서)
         roll, pitch, yaw = rotation.as_euler("xyz", degrees=False)
 
         return roll, pitch, yaw
 
     @staticmethod
-    def rotation_matrix_from_euler(roll, pitch, yaw):
+    def quaternion_from_euler(*args, **kwargs) -> tuple:
         """
-        In: roll, pitch, yaw, Out: rotation_matrix
+        return x, y, z, w
         """
+        if len(args) == 1 and isinstance(args[0], (list, tuple)):
+            roll, pitch, yaw = args[0]
+        elif len(args) == 4:
+            roll, pitch, yaw = args
+        elif all(k in kwargs for k in ("roll", "pitch", "yaw")):
+            roll = kwargs["roll"]
+            pitch = kwargs["pitch"]
+            yaw = kwargs["yaw"]
+        else:
+            raise ValueError(
+                "Invalid input. Provide [roll, pitch, yaw], roll, pitch, yaw, or roll=roll, pitch=pitch, yaw=yaw."
+            )
+
+        euler = R.from_euler("xyz", [roll, pitch, yaw], degrees=False)
+        qx, qy, qz, qw = euler.as_quat()
+
+        # qx = np.sin(roll / 2) * np.cos(pitch / 2) * np.cos(yaw / 2) - np.cos(
+        #     roll / 2
+        # ) * np.sin(pitch / 2) * np.sin(yaw / 2)
+        # qy = np.cos(roll / 2) * np.sin(pitch / 2) * np.cos(yaw / 2) + np.sin(
+        #     roll / 2
+        # ) * np.cos(pitch / 2) * np.sin(yaw / 2)
+        # qz = np.cos(roll / 2) * np.cos(pitch / 2) * np.sin(yaw / 2) - np.sin(
+        #     roll / 2
+        # ) * np.sin(pitch / 2) * np.cos(yaw / 2)
+        # qw = np.cos(roll / 2) * np.cos(pitch / 2) * np.cos(yaw / 2) + np.sin(
+        #     roll / 2
+        # ) * np.sin(pitch / 2) * np.sin(yaw / 2)
+
+        return qx, qy, qz, qw
+
+    @staticmethod
+    def quaternion_from_rotation_matrix(rotation_matrix: np.ndarray) -> tuple:
+        """
+        return x, y, z, w
+        """
+        if rotation_matrix.shape != (3, 3):
+            raise ValueError("Input rotation matrix must be a 3x3 numpy array.")
+
+        # 회전 행렬을 scipy의 Rotation 객체로 변환
+        rotation = R.from_matrix(rotation_matrix)
+
+        # Quaternion 추출
+        qx, qy, qz, qw = rotation.as_quat()
+
+        return qx, qy, qz, qw
+
+    @staticmethod
+    def rotation_matrix_from_euler(*args, **kwargs) -> np.ndarray:
+        """
+        return rotation_matrix
+        """
+        if len(args) == 1 and isinstance(args[0], (list, tuple)):
+            roll, pitch, yaw = args[0]
+        elif len(args) == 4:
+            roll, pitch, yaw = args
+        elif all(k in kwargs for k in ("roll", "pitch", "yaw")):
+            roll = kwargs["roll"]
+            pitch = kwargs["pitch"]
+            yaw = kwargs["yaw"]
+        else:
+            raise ValueError(
+                "Invalid input. Provide [roll, pitch, yaw], roll, pitch, yaw, or roll=roll, pitch=pitch, yaw=yaw."
+            )
+
         rotation = R.from_euler("xyz", [roll, pitch, yaw], degrees=False)
         return rotation.as_matrix()
 
     @staticmethod
-    def create_transform_matrix(translation, rotation):
+    def create_transform_matrix(
+        translation: np.ndarray, rotation: np.ndarray
+    ) -> np.ndarray:
         """
-        In: translation, rotation, Out: transform_matrix
+        return transform_matrix
         """
+        if translation.shape != (3,) or rotation.shape != (3, 3):
+            raise ValueError("Invalid shape of translation or rotation matrix.")
+
         transform_matrix = np.eye(4)
         transform_matrix[:3, :3] = rotation
         transform_matrix[:3, 3] = translation
         return transform_matrix
 
     @staticmethod
-    def transform_realsense_to_ros(transform_matrix: np.array) -> np.array:
+    def transform_realsense_to_ros(transform_matrix: np.ndarray) -> np.ndarray:
         """
         Realsense 좌표계를 ROS 좌표계로 변환합니다.
 
@@ -128,7 +199,7 @@ class QuaternionAngle:
         return transform_matrix_ros
 
     @staticmethod
-    def invert_transformation(matrix):
+    def invert_transformation(matrix: np.ndarray) -> np.ndarray:
         """
         Inverts a 4x4 transformation matrix.
 
@@ -161,7 +232,9 @@ class QuaternionAngle:
 
 class PointCloudTransformer:
     @staticmethod
-    def numpy_to_pointcloud2(points: np.array, frame_id, stamp, rgb=True):
+    def numpy_to_pointcloud2(
+        points: np.ndarray, frame_id: str, stamp: Time, rgb: bool = True
+    ) -> PointCloud2:
         # Create the header
         header = Header(frame_id=frame_id, stamp=stamp)
         fields = [
@@ -250,7 +323,9 @@ class PointCloudTransformer:
         return cloud
 
     @staticmethod
-    def transform_pointcloud(points: np.array, transform_matrix: np.array) -> np.array:
+    def transform_pointcloud(
+        points: np.ndarray, transform_matrix: np.ndarray
+    ) -> np.ndarray:
         """
         Apply a transformation matrix to a point cloud.
         :param points: numpy array of shape (N, 6) with x, y, z, r, g, b
@@ -272,7 +347,7 @@ class PointCloudTransformer:
         return points
 
     @staticmethod
-    def pointcloud2_to_numpy(msg: PointCloud2, rgb: bool = True) -> np.array:
+    def pointcloud2_to_numpy(msg: PointCloud2, rgb: bool = True) -> np.ndarray:
         # Return [x, y, z] or [x, y, z, r, g, b] depending on the value of rgb
 
         fields = ["x", "y", "z"]
@@ -309,7 +384,7 @@ class PointCloudTransformer:
 
     @staticmethod
     def ROI_Color_filter(
-        points: np.array,
+        points: np.ndarray,
         x_range: tuple = None,
         y_range: tuple = None,
         z_range: tuple = None,
@@ -318,7 +393,7 @@ class PointCloudTransformer:
         b_range: tuple = None,
         ROI: bool = True,
         rgb: bool = True,
-    ) -> np.array:
+    ) -> np.ndarray:
         if points.shape[1] != 3 and points.shape[1] != 6:
             print(f"points shape: {points.shape[1]}")
             raise ValueError("Invalid shape of the input points")
@@ -351,7 +426,7 @@ class PointCloudTransformer:
         return points[combined_filter]
 
     @staticmethod
-    def numpy_voxel_filter(points, voxel_size=0.01):
+    def numpy_voxel_filter(points: np.ndarray, voxel_size=0.01) -> np.ndarray:
         """
         Perform voxel grid filtering on [x, y, z, r, g, b] NumPy array.
 
@@ -372,3 +447,28 @@ class PointCloudTransformer:
         filtered_points = points[unique_indices]
 
         return filtered_points
+
+
+class Queue(object):
+    def __init__(self, max_size=10):
+        self._max_size = max_size
+        self._queue = []
+
+    def push(self, item: float):
+        if len(self._queue) >= self._max_size:
+            self._queue.pop(0)
+        self._queue.append(item)
+        return self._queue
+
+    def get(self):
+        return self._queue
+
+    def push_and_get_average(self, item: float):
+        self.push(item)
+        return self.get_average()
+
+    def get_average(self):
+        if len(self._queue) != self._max_size:
+            return 0.0
+
+        return np.mean(self._queue, axis=0)

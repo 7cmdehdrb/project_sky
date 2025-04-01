@@ -31,6 +31,9 @@ setup(
     license="TODO: License declaration",
     # tests_require=["pytest"],
     entry_points={
-        "console_scripts": [],
+        "console_scripts": [
+            "real_time_segmentation_node = object_tracker.real_time_segmentation_node:main",
+            "object_pose_estimation_server = object_tracker.object_pose_estimation_server:main",
+        ],
     },
 )

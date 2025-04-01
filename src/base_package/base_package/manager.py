@@ -1,27 +1,30 @@
 # ROS2
 import rclpy
-from rclpy.publisher import Publisher
-from rclpy.node import Node
-from rclpy.time import Time
 from rclpy.duration import Duration
+from rclpy.node import Node
+from rclpy.publisher import Publisher
 from rclpy.qos import QoSProfile, qos_profile_system_default
+from rclpy.time import Time
 
-# Message
-from std_msgs.msg import *
+# ROS2 Messages
 from geometry_msgs.msg import *
-from sensor_msgs.msg import *
 from nav_msgs.msg import *
+from sensor_msgs.msg import *
+from std_msgs.msg import *
 from visualization_msgs.msg import *
+from custom_msgs.msg import *
+from tf2_geometry_msgs.tf2_geometry_msgs import PoseStamped as TF2PoseStamped
+from builtin_interfaces.msg import Duration as BuiltinDuration
 
 # TF
 from tf2_ros import *
 
-# Python
-import numpy as np
+# Python Libraries
 import cv2
+import numpy as np
 import cv_bridge
-from PIL import ImageEnhance
 from PIL import Image as PILImage
+from PIL import ImageEnhance
 
 
 class Manager(object):
@@ -36,7 +39,7 @@ class ImageManager(Manager):
         subscribed_topics: list = [],
         published_topics: list = [],
         *args,
-        **kwargs
+        **kwargs,
     ):
         """
         subscribed_topics: list
@@ -206,3 +209,74 @@ class ObjectManager(Manager):
             13: (255, 165, 0),  # Orange
             14: (0, 0, 0),  # Black
         }
+
+
+class TransformManager(Manager):
+    def __init__(self, node: Node, *args, **kwargs):
+        super().__init__(node, *args, **kwargs)
+
+        self._tf_buffer = Buffer(node=self._node, cache_time=Duration(seconds=2))
+        self._tf_listener = TransformListener(buffer=self._tf_buffer, qos=self._node)
+        self._tf_broadcaster = TransformBroadcaster(self._node)
+
+    def check_transform_valid(self, target_frame: str, source_frame: str):
+        try:
+            valid = self._tf_buffer.can_transform(
+                target_frame,
+                source_frame,
+                self._node.get_clock().now().to_msg(),
+                timeout=Duration(seconds=0.1),
+            )
+            return valid
+        except Exception as e:
+            self._node.get_logger().warn(
+                f"Cannot Lookup Transform Between {target_frame} and {source_frame}"
+            )
+            self._node.get_logger().warn(e)
+            return False
+
+    def transform_bbox_3d(
+        self,
+        bbox_3d: BoundingBox3DMultiArray,
+        target_frame: str = "world",
+        source_frame: str = "camera1_link",
+    ) -> BoundingBox3DMultiArray:
+        """
+        Transform the bounding box in camera frame to the world frame.
+        """
+
+        if self.check_transform_valid(target_frame, source_frame):
+            # Initialize the transformed bounding box
+            transformed_bbox = BoundingBox3DMultiArray()
+
+            try:
+                # Transform the bounding box
+                for bbox in bbox_3d.data:
+                    bbox: BoundingBox3D
+
+                    source_pose = TF2PoseStamped(
+                        header=Header(
+                            stamp=self._node.get_clock().now().to_msg(),
+                            frame_id=source_frame,
+                        ),
+                        pose=bbox.pose,
+                    )
+
+                    target_pose = self._tf_buffer.transform(
+                        object_stamped=source_pose,
+                        target_frame=target_frame,
+                        timeout=Duration(seconds=1),
+                    )
+
+                    bbox.pose = target_pose.pose
+                    transformed_bbox.data.append(bbox)
+
+                return transformed_bbox
+            except Exception as e:
+                self._node.get_logger().warn(
+                    f"Cannot Transform BoundingBox3DMultiArray from {source_frame} to {target_frame}"
+                )
+                self._node.get_logger().warn(e)
+                return None
+
+        return None

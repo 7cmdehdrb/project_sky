@@ -11,7 +11,7 @@ from geometry_msgs.msg import *
 from sensor_msgs.msg import *
 from nav_msgs.msg import *
 from visualization_msgs.msg import *
-from custom_msgs.srv import FCNRequest
+from custom_msgs.srv import FCNRequest, FCNOccupiedRequest, FCNIntegratedRequest
 
 # ROS2 TF
 from tf2_ros import *
@@ -39,7 +39,7 @@ from torchvision.models.segmentation import fcn_resnet50
 
 # Custom Modules
 from base_package.header import PointCloudTransformer, QuaternionAngle
-from base_package.manager import Manager, ImageManager
+from base_package.manager import Manager, ImageManager, ObjectManager
 from base_package.enum_class import ObjectDictionary
 from object_tracker.real_time_segmentation import RealTimeSegmentationNode
 from ament_index_python.packages import get_package_share_directory
@@ -193,6 +193,48 @@ class FCNManager(Manager):
         return top_peaks, data[top_peaks]
 
 
+class FCNClientManager(Manager):
+    def __init__(self, node: Node, *args, **kwargs):
+        super().__init__(node, *args, **kwargs)
+
+        # >>> Managers >>>
+        self._object_manager = ObjectManager(self._node, *args, **kwargs)
+        # <<< Managers >>>
+
+        # >>> Data >>>
+        self._cls: str = None
+        # <<< Data >>>
+
+        # >>> ROS2 >>>
+        self._cls_subscriber = self._node.create_subscription(
+            String,
+            self._node.get_name() + "/fcn_target_cls",
+            self.cls_callback,
+            qos_profile=qos_profile_system_default,
+        )
+        self._client = self._node.create_client(
+            FCNIntegratedRequest, "/fcn_integrated_request"
+        )
+        # <<< ROS2 <<<
+
+        # No main loop. This class is used as a callback
+
+    def cls_callback(self, msg: String):
+        if msg.data in self._object_manager.names.keys():
+            self._cls = msg.data
+
+    def send_fcn_integrated_request(self):
+        if self._cls is None:
+            return None
+
+        request = FCNIntegratedRequest.Request(target_cls=self._cls)
+        response: FCNIntegratedRequest.Response = self._client.call(request)
+
+        self._cls = None
+
+        return response
+
+
 class GridManager(Manager):
     class Grid(object):
         def __init__(
@@ -219,6 +261,10 @@ class GridManager(Manager):
         @property
         def col_id(self):
             return self._col_id
+
+        @property
+        def center_coord(self):
+            return self._center_coord
 
         @property
         def is_occupied(self):
@@ -325,8 +371,6 @@ class GridManager(Manager):
         with open(grid_data_path, "r") as f:
             self._grid_data = json.load(f)
         # <<< Load Files
-
-        self._top_peak_idx = [i for i in range(len(self._grid_data["columns"]))]
 
     def create_grid(self):
         rows = self._grid_data["rows"]

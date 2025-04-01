@@ -22,10 +22,49 @@ import numpy as np
 import sys
 import os
 import array
-from base_package.manager import ObjectManager
+from base_package.manager import ObjectManager, Manager
 
 
-class FCNClientNode(Node):
+class FCN_Integration_Client_Manager(Manager):
+    def __init__(self, node: Node, *args, **kwargs):
+        super().__init__(node, *args, **kwargs)
+
+        self._publisher = self._node.create_publisher(
+            String,
+            "/fcn_target_cls",
+            qos_profile=qos_profile_system_default,
+        )
+
+        self._subscriber = self._node.create_subscription(
+            String,
+            "/fcn_target_result",
+            self.fcn_result_callback,
+            qos_profile=qos_profile_system_default,
+        )
+
+        self._response = [None, None]
+
+    def fcn_result_callback(self, msg: String):
+        current_row, current_col = self._response
+
+        if current_row is None and current_col is None:
+            row, col = msg.data.split(",")
+            if row is not None and col is not None:
+                self._response = [row, col]  # A, 1
+                self._node.get_logger().info(
+                    f"FCN Integration Response: {self._response}"
+                )
+
+    def send_fcn_integration_request(self, target_cls: str):
+        self._node.get_logger().info(f"Sending FCN Integration Request: {target_cls}")
+        self._publisher.publish(String(data=target_cls))
+
+    @property
+    def fcn_result(self):
+        return self._response
+
+
+class FCN_Integration_Server_Node(Node):
     def __init__(self):
         super().__init__("fcn_client_node")
 
@@ -139,7 +178,7 @@ class FCNClientNode(Node):
 def main():
     rclpy.init(args=None)
 
-    node = FCNClientNode()
+    node = FCN_Integration_Server_Node()
 
     rclpy.spin(node)
 

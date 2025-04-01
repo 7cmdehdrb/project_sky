@@ -29,11 +29,21 @@ from enum import Enum
 import json
 
 # custom
-from base_package.header import QuaternionAngle
-from robot_control.ur5e_control import MoveitClient
-from robot_control.gripper_action import GripperActionClient
-from robot_control.fcn_integration_client import FCN_IntegratedClient
-from object_tracker.object_pose_estimator_client import MegaPoseClient
+from base_package.manager import ObjectManager, TransformManager
+from fcn_network.fcn_integration_server import FCN_Integration_Client_Manager
+from object_tracker.megapose_client import MegaPoseClient
+from robot_control.control_manager import (
+    GripperActionManager,
+    FK_ServiceManager,
+    IK_ServiceManager,
+    GetPlanningScene_ServiceManager,
+    ApplyPlanningScene_ServiceManager,
+    CartesianPath_ServiceManager,
+    KinematicPath_ServiceManager,
+    ExecuteTrajectory_ServiceManager,
+    JointStatesManager,
+    ObjectSelectionManager,
+)
 
 
 class State(Enum):
@@ -51,203 +61,52 @@ class State(Enum):
     FCN_POSITIONING = 10
 
 
-class ObjectSelector(object):
-    class Grid(object):
-        def __init__(self, row: str, col: int, position=Point()):
-            self.row = row
-            self.col = col
-            self.position = position
-
-    def __init__(self, node: Node, buffer: Buffer, tf_listener: TransformListener):
-        with open(
-            "/home/irol/workspace/project_sky/src/fcn_network/resource/grid_data.json"
-        ) as f:
-            grid_data = json.load(f)
-
-        self._node = node
-        self._buffer = buffer
-        self._tf_listener = tf_listener
-
-        self.rows = grid_data["rows"]
-        self.cols = grid_data["columns"]
-
-        self.start_coord = Point(
-            x=grid_data["grid_identifier"]["start_center_coord"]["x"],
-            y=grid_data["grid_identifier"]["start_center_coord"]["y"],
-            z=0.0,
-        )
-
-        self.grid_size = Vector3(
-            x=grid_data["grid_identifier"]["grid_size"]["x"],
-            y=grid_data["grid_identifier"]["grid_size"]["y"],
-            z=0.0,
-        )
-
-        grids = []
-        # A, B, C
-        for r, row in enumerate(self.rows):
-            # 1, 2, 3
-            for c, col in enumerate(self.cols):
-
-                center_coord = Point(
-                    x=self.start_coord.x + self.grid_size.x * r,
-                    y=self.start_coord.y - self.grid_size.y * c,
-                    z=0.0,
-                )
-
-                grid = ObjectSelector.Grid(row=row, col=col, position=center_coord)
-
-                print(grid.row, grid.col, grid.position)
-                grids.append(grid)
-
-        self.grids = grids
-
-    def get_center_coord(self, row: str, col: int):
-        for grid in self.grids:
-            grid: ObjectSelector.Grid
-            if grid.row == row and grid.col == col:
-                return grid.position
-
-        return None
-
-    def get_target_object(
-        self, row: str, col: int, target_objects: BoundingBox3DMultiArray
-    ):
-        # At World Frame
-        center_coord = self.get_center_coord(row=row, col=col)
-        if center_coord is None:
-            return None
-
-        if self._buffer.can_transform(
-            "world", "camera1_link", self._node.get_clock().now()
-        ):
-            transformed_center_coord = self._buffer.transform(
-                object_stamped=TF2PoseStamped(
-                    header=Header(
-                        stamp=self._node.get_clock().now().to_msg(),
-                        frame_id="camera1_link",
-                    ),
-                    pose=Pose(
-                        position=center_coord,
-                        orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                    ),
-                ),
-                target_frame="world",
-                timeout=Duration(seconds=1),
-            ).pose.position
-
-            self._node.get_logger().info(
-                f"Transformed Center Coord: {transformed_center_coord}"
-            )
-
-            min_distance = float("inf")
-            result_target_object = None
-            for target_object in target_objects.data:
-                target_object: BoundingBox3D
-
-                if target_object.id > 900:
-                    self._node.get_logger().warn(
-                        f"Skip Object: {target_object.cls}, {target_object.id}"
-                    )
-
-                    pass
-                else:
-                    distance = np.linalg.norm(
-                        np.array(
-                            [
-                                target_object.pose.position.x,
-                                target_object.pose.position.y,
-                            ]
-                        )
-                        - np.array(
-                            [transformed_center_coord.x, transformed_center_coord.y]
-                        )
-                    )
-
-                    self._node.get_logger().info(f"Target Object: {target_object.cls}")
-                    self._node.get_logger().info(f"Distance: {distance}")
-                    self._node.get_logger().info(
-                        f"Target Position: {target_object.pose.position}"
-                    )
-
-                    if distance < min_distance:
-                        min_distance = distance
-                        result_target_object = target_object
-
-            self._node.get_logger().info("*" * 10)
-            self._node.get_logger().info(f"Min Distance: {min_distance}")
-
-            self._node.get_logger().info(f"Center Coord: {transformed_center_coord}")
-            self._node.get_logger().info(f"Target Object: {result_target_object.cls}")
-            self._node.get_logger().info(
-                f"Target Position: {result_target_object.pose.position}"
-            )
-            return result_target_object
-
-        return None
-
-
 class MainControlNode(object):
-    def __init__(self, node: Node):
+    def __init__(self, node: Node, *args, **kwargs):
         self._node = node
 
-        self.tf_buffer = Buffer(node=self._node, cache_time=Duration(seconds=1))
-        self.tf_listener = TransformListener(
-            self.tf_buffer, self._node, qos=qos_profile_system_default
+        # >>> Managers >>>
+        self._transform_manager = TransformManager(node=self._node, *args, **kwargs)
+        self._joint_states_manager = JointStatesManager(
+            node=self._node, *args, **kwargs
         )
 
-        self._moveit_client = MoveitClient(node=self._node)
-        self._gripper_client = GripperActionClient(node=self._node)
-        self._megapose_client = MegaPoseClient(node=self._node)
-        self._fcn_integrated_client = FCN_IntegratedClient(node=self._node)
-        self._object_selector = ObjectSelector(
-            node=self._node, buffer=self.tf_buffer, tf_listener=self.tf_listener
+        self._fcn_integration_client_manager = FCN_Integration_Client_Manager(
+            node=self._node, *args, **kwargs
         )
 
-        self.names = {
-            "cup_1": "cup_sky",
-            "cup_2": "cup_white",
-            "cup_3": "cup_blue",
-            "mug_1": "mug_black",
-            "mug_2": "mug_gray",
-            "mug_3": "mug_yello",
-            "bottle_1": "alive",
-            "bottle_2": "green_tea",
-            "bottle_3": "yello_smoothie",
-            "can_1": "coca_cola",
-            "can_2": "cyder",
-            "can_3": "yello_peach",
-        }
+        self._object_manager = ObjectManager(node=self._node, *args, **kwargs)
+        self._object_selection_manager = ObjectSelectionManager(node=self._node)
 
-        self.target_cls = "bottle_2"
-        self.test_pub = self._node.create_publisher(
-            String,
-            "/fcn_target_cls",
-            qos_profile=qos_profile_system_default,
+        self._gripper_action_manager = GripperActionManager(
+            node=self._node, *args, **kwargs
         )
-        self.test_sub = self._node.create_subscription(
-            String,
-            "/fcn_target_result",
-            self.test_callback,
-            qos_profile=qos_profile_system_default,
-        )
-        self.fcn_result = [None, None]
 
+        self._fk_service_manager = FK_ServiceManager(node=self._node, *args, **kwargs)
+        self._ik_service_manager = IK_ServiceManager(node=self._node, *args, **kwargs)
+        self._get_planning_scene_service_manager = GetPlanningScene_ServiceManager(
+            node=self._node, *args, **kwargs
+        )
+        self._apply_planning_scene_service_manager = ApplyPlanningScene_ServiceManager(
+            node=self._node, *args, **kwargs
+        )
+        self._cartesian_path_service_manager = CartesianPath_ServiceManager(
+            node=self._node, *args, **kwargs
+        )
+        self._kinematic_path_service_manager = KinematicPath_ServiceManager(
+            node=self._node, *args, **kwargs
+        )
+        self._execute_trajectory_service_manager = ExecuteTrajectory_ServiceManager(
+            node=self._node, *args, **kwargs
+        )
+
+        self._megapose_client = MegaPoseClient(node=self._node, *args, **kwargs)
+        # <<< Managers <<<
+
+        self.target_cls = kwargs["target_cls"]
         self.state = State.WAITING
 
-        self.gripper_joint_subscriber = self._node.create_subscription(
-            JointState,
-            "/gripper/joint_states",
-            self.gripper_joint_callback,
-            qos_profile=qos_profile_system_default,
-        )
-        self.gripper_joint_states = None
-
-        self.home_pose = None
-        self.drop_pose = None
-        self.end_effector = "gripper_link"
-        self.target_objects: BoundingBox3DMultiArray = None
-        self.target_object: BoundingBox3D = None
+        # >>> Unique Joint States >>>
 
         self.home_joints = JointState(
             name=[
@@ -304,30 +163,13 @@ class MainControlNode(object):
             ],
         )
 
-        self.target_pose_publisher = self._node.create_publisher(
-            PoseStamped,
-            self._node.get_name() + "/target_pose",
-            qos_profile=qos_profile_system_default,
-        )
-
-    def test_callback(self, msg: String):
-        current_row, current_col = self.fcn_result
-        if current_row is None and current_col is None:
-            txt = msg.data
-            row, col = txt.split(",")
-            self.fcn_result = [row, col]  # A, 1
-            self._node.get_logger().info(f"FCN Result: {self.fcn_result}")
-
-    def gripper_joint_callback(self, msg: JointState):
-        self.gripper_joint_states = msg
-
-    def initialize(self):
-        self._moveit_client.initialize_world()
+        # <<< Unique Joint States <<<
 
     def run(self):
         header = Header(stamp=self._node.get_clock().now().to_msg(), frame_id="world")
         self._node.get_logger().info(f"Running State: {self.state}")
 
+        # >>> LEVEL 0. Waiting for initialization
         if self.state == State.WAITING:
             if self.waiting():
                 self.state = State.MEGAPOSE_SEARCHING
@@ -585,20 +427,6 @@ class MainControlNode(object):
                 success2 = True
 
         return success1 and success2
-
-    def temperal_reset(self):
-        self.initialize()
-
-        transformed_bbox_3d = self.transform_bbox3d(bbox_3d=BoundingBox3DMultiArray())
-        collision_objects = self.collision_object_from_bbox_3d(
-            header=Header(
-                stamp=self._node.get_clock().now().to_msg(), frame_id="base_link"
-            ),
-            bbox_3d=transformed_bbox_3d,
-        )
-        self._moveit_client.apply_planning_scene(collision_objects=collision_objects)
-
-        return True
 
     def fcn_searching(self):
         self.initialize()
