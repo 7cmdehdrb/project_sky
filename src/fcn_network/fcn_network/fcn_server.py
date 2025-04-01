@@ -179,14 +179,12 @@ def main():
         "--model_file",
         type=str,
         required=True,
-        default="best_model.pth",
         help="Path or file name of the trained FCN model. If input is a file name, the file should be located in the 'resource' directory. Required",
     )
     parser.add_argument(
         "--grid_data_file",
         type=str,
         required=True,
-        default="grid_data.json",
         help="Path or file name of the grid data. If input is a file name, the file should be located in the 'resource' directory. Required",
     )
     parser.add_argument(

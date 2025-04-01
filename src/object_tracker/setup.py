@@ -1,14 +1,17 @@
 from setuptools import find_packages, setup
 import os
 import sys
+from glob import glob
 
 package_name = "object_tracker"
 
 resource_path = os.path.join(os.path.dirname(__file__), "resource")
-file_names = os.listdir(resource_path)
+resource_file_names = os.listdir(resource_path)
 
-valid_extensions = (".json", ".yaml", ".txt", ".pt", ".pth")
-filtered_files = [f for f in file_names if f.endswith(valid_extensions)]
+resource_valid_extensions = (".json", ".yaml", ".txt", ".pt", ".pth")
+filtered_resource_files = [
+    f for f in resource_file_names if f.endswith(resource_valid_extensions)
+]
 
 
 setup(
@@ -19,9 +22,10 @@ setup(
         (
             "share/ament_index/resource_index/packages",
             ["resource/" + package_name]
-            + [f"resource/{file}" for file in filtered_files],
+            + [f"resource/{file}" for file in filtered_resource_files],
         ),
         ("share/" + package_name, ["package.xml"]),
+        (os.path.join("share", package_name, "launch"), glob("launch/*.py")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

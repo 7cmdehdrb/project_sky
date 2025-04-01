@@ -1,6 +1,7 @@
 from setuptools import find_packages, setup
 import os
 import sys
+from glob import glob
 
 package_name = "fcn_network"
 
@@ -21,6 +22,7 @@ setup(
             + [f"resource/{file}" for file in filtered_files],
         ),
         ("share/" + package_name, ["package.xml"]),
+        (os.path.join("share", package_name, "launch"), glob("launch/*.py")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

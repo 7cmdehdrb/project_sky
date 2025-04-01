@@ -216,7 +216,7 @@ class TransformManager(Manager):
         super().__init__(node, *args, **kwargs)
 
         self._tf_buffer = Buffer(node=self._node, cache_time=Duration(seconds=2))
-        self._tf_listener = TransformListener(buffer=self._tf_buffer, qos=self._node)
+        self._tf_listener = TransformListener(node=self._node, buffer=self._tf_buffer)
         self._tf_broadcaster = TransformBroadcaster(self._node)
 
     def check_transform_valid(self, target_frame: str, source_frame: str):
