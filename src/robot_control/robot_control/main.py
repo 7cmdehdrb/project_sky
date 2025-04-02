@@ -27,6 +27,7 @@ from tf2_ros import *
 import numpy as np
 from enum import Enum
 import json
+import argparse
 
 # custom
 from base_package.manager import ObjectManager, TransformManager
@@ -81,7 +82,9 @@ class MainControlNode(object):
         )
 
         self._object_manager = ObjectManager(node=self._node, *args, **kwargs)
-        self._object_selection_manager = ObjectSelectionManager(node=self._node)
+        self._object_selection_manager = ObjectSelectionManager(
+            node=self._node, *args, **kwargs
+        )
 
         self._gripper_action_manager = GripperActionManager(
             node=self._node, *args, **kwargs
@@ -89,12 +92,14 @@ class MainControlNode(object):
 
         self._fk_service_manager = FK_ServiceManager(node=self._node, *args, **kwargs)
         self._ik_service_manager = IK_ServiceManager(node=self._node, *args, **kwargs)
+
         self._get_planning_scene_service_manager = GetPlanningScene_ServiceManager(
             node=self._node, *args, **kwargs
         )
         self._apply_planning_scene_service_manager = ApplyPlanningScene_ServiceManager(
             node=self._node, *args, **kwargs
         )
+
         self._cartesian_path_service_manager = CartesianPath_ServiceManager(
             node=self._node, *args, **kwargs
         )
@@ -105,7 +110,6 @@ class MainControlNode(object):
             node=self._node, *args, **kwargs
         )
 
-        self._megapose_client = MegaPoseClient(node=self._node, *args, **kwargs)
         # <<< Managers <<<
 
         # >>> Parameters >>>
@@ -196,11 +200,12 @@ class MainControlNode(object):
     # >>> Main Control Method >>>
 
     def run(self):
+        self._node.get_logger().info(f"State: {self._state.name}")
         header = Header(
             stamp=self._node.get_clock().now().to_msg(),
             frame_id="world",
         )
-        self._operations[self.state.value](header=header)
+        self._operations[self._state.value](header=header)
 
     # <<< Main Control Method <<<
 
@@ -220,7 +225,7 @@ class MainControlNode(object):
             )
 
             self._node.get_logger().info("Waiting Success")
-            self._state = State(self.state.value + 1)
+            self._state = State(self._state.value + 1)
 
             return True
 
@@ -265,12 +270,12 @@ class MainControlNode(object):
                         bbox_3d=transformed_bbox_3d,
                     )
                     is_applying_success = self._apply_planning_scene_service_manager.add_collistion_objects(
-                        collision_objects=collision_objects
+                        collision_objects=collision_objects, scene=current_scene
                     )
                     if is_applying_success:
                         self._target_objects = bbox_3d
                         self._node.get_logger().info("Apply Planning Scene Success")
-                        self.state = State(self.state.value + 1)
+                        self._state = State(self._state.value + 1)
                         return True
 
         except ValueError as ve:
@@ -294,19 +299,26 @@ class MainControlNode(object):
             row, col = self._fcn_integration_client_manager.fcn_result
 
             if row is not None and col is not None:
-                center_coord = self._object_selection_manager.get_center_coord(
-                    row=row, col=int(col)
-                )
+                # center_coord = self._object_selection_manager.get_center_coord(
+                #     row=row, col=int(col)
+                # )
+                # target_object: BoundingBox3D = (
+                #     self._object_selection_manager.get_target_object(
+                #         center_coord=center_coord, target_objects=self._target_objects
+                #     )
+                # )
                 target_object: BoundingBox3D = (
-                    self._object_selection_manager.get_target_object(
-                        center_coord=center_coord, target_objects=self._target_objects
+                    self._object_selection_manager.get_target_object_with_grid_id(
+                        target_objects=self._target_objects, grid_id=f"{row}{col}"
                     )
                 )
 
                 if target_object is not None:
                     self._target_object = target_object
-                    self._state = State(self.state.value + 1)
-                    self._node.get_logger().info(f"FCN Searching Success")
+                    self._state = State(self._state.value + 1)
+                    self._node.get_logger().info(
+                        f"FCN Searching Success: {row}, {col} / {self._target_object.cls}"
+                    )
                     return True
 
         except ValueError as ex:
@@ -324,18 +336,21 @@ class MainControlNode(object):
         Target pose is home joints
         """
         try:
-            self.control(
+            self._gripper_action_manager.control_gripper(open=True)
+            control_success = self.control(
                 header=header,
-                target_pose=Pose(),  # To ignore the target pose
+                target_pose=None,  # To ignore the target pose
                 joint_states=self._home_joints,
                 tolerance=0.01,
                 scale_factor=0.5,
                 use_path_contraint=False,
             )
 
-            self._state = State(self.state.value + 1)
-
-            return True
+            if control_success:
+                self._state = State(self._state.value + 1)
+                return True
+            else:
+                return False
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -354,25 +369,27 @@ class MainControlNode(object):
         try:
             target_pose: Pose = self._target_object.pose
 
-            self.control(
+            control_success = self.control(
                 header=header,
                 target_pose=Pose(
                     position=Point(
                         x=target_pose.position.x,
-                        y=target_pose.position.y - 0.2,
+                        y=target_pose.position.y - 0.1,
                         z=target_pose.position.z,
                     ),
                     orientation=self._home_pose.pose.orientation,
                 ),
                 joint_states=None,
-                tolerance=0.01,
+                tolerance=0.05,
                 scale_factor=0.5,
-                use_path_contraint=True,
+                use_path_contraint=False,
             )
 
-            self._state = State(self.state.value + 1)
-
-            return True
+            if control_success:
+                self._state = State(self._state.value + 1)
+                return True
+            else:
+                return False
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -391,17 +408,27 @@ class MainControlNode(object):
         try:
             target_pose: Pose = self._target_object.pose
 
-            self.control(
+            control_success = self.control(
                 header=header,
                 target_pose=Pose(
-                    position=target_pose.position,
+                    position=Point(
+                        x=target_pose.position.x,
+                        y=target_pose.position.y,
+                        z=target_pose.position.z - 0.02,
+                    ),
                     orientation=self._home_pose.pose.orientation,
                 ),
                 joint_states=None,
-                tolerance=0.01,
+                tolerance=0.02,
                 scale_factor=0.2,
-                use_path_contraint=True,
+                use_path_contraint=False,
             )
+
+            if control_success:
+                self._state = State(self._state.value + 1)
+                return True
+            else:
+                return False
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -418,7 +445,7 @@ class MainControlNode(object):
         """
         self._gripper_action_manager.control_gripper(open=False)
         if self._gripper_action_manager.is_finished is True:
-            self._state = State(self.state.value + 1)
+            self._state = State(self._state.value + 1)
             self._node.get_logger().info("Grasping Success")
             return True
 
@@ -431,7 +458,7 @@ class MainControlNode(object):
         try:
             self._gripper_action_manager.control_gripper(open=True)
             if self._gripper_action_manager.is_finished is True:
-                self._state = State(self.state.value + 1)
+                self._state = State(self._state.value + 1)
                 self._node.get_logger().info("Ungrasing Success")
                 return True
 
@@ -451,13 +478,14 @@ class MainControlNode(object):
         """
         try:
             target_pose: Pose = self._target_object.pose
+            home_pose: Pose = self._home_pose.pose
 
-            self.control(
+            control_success = self.control(
                 header=header,
                 target_pose=Pose(
                     position=Point(
                         x=target_pose.position.x,
-                        y=target_pose.position.y - 0.2,
+                        y=home_pose.position.y + 0.05,
                         z=target_pose.position.z + 0.05,
                     ),
                     orientation=self._home_pose.pose.orientation,
@@ -465,12 +493,14 @@ class MainControlNode(object):
                 joint_states=None,
                 tolerance=0.01,
                 scale_factor=0.5,
-                use_path_contraint=True,
+                use_path_contraint=False,
             )
 
-            self._state = State(self.state.value + 1)
-
-            return True
+            if control_success:
+                self._state = State(self._state.value + 1)
+                return True
+            else:
+                return False
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -487,7 +517,7 @@ class MainControlNode(object):
         Target pose is the pose which is located above the target object.
         """
         try:
-            self.control(
+            control_success = self.control(
                 header=header,
                 target_pose=Pose(
                     position=Point(
@@ -500,12 +530,14 @@ class MainControlNode(object):
                 joint_states=None,
                 tolerance=0.01,
                 scale_factor=0.5,
-                use_path_contraint=True,
+                use_path_contraint=False,
             )
 
-            self._state = State(self.state.value + 1)
-
-            return True
+            if control_success:
+                self._state = State(self._state.value + 1)
+                return True
+            else:
+                return False
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -523,18 +555,20 @@ class MainControlNode(object):
         """
 
         try:
-            self.control(
+            control_success = self.control(
                 header=header,
-                target_pose=Pose(),  # To ignore the target pose
+                target_pose=None,  # To ignore the target pose
                 joint_states=self._dropping_joints,
                 tolerance=0.01,
                 scale_factor=0.5,
                 use_path_contraint=False,
             )
 
-            self._state = State(self.state.value + 1)
-
-            return True
+            if control_success:
+                self._state = State(self._state.value + 1)
+                return True
+            else:
+                return False
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -552,18 +586,21 @@ class MainControlNode(object):
         """
 
         try:
-            self.control(
+            control_success = self.control(
                 header=header,
-                target_pose=Pose(),  # To ignore the target pose
+                target_pose=None,  # To ignore the target pose
                 joint_states=self._waiting_joints,
                 tolerance=0.01,
                 scale_factor=0.5,
                 use_path_contraint=False,
             )
 
-            self._state = State(self.state.value + 1)
-
-            return True
+            if control_success:
+                # self._state = State(self._state.value + 1)
+                self._state = State.WAITING
+                return True
+            else:
+                return False
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -606,9 +643,9 @@ class MainControlNode(object):
                         header=header,
                         link_name=self._end_effector,
                         orientation=self._home_pose.pose.orientation,
-                        absolute_x_axis_tolerance=0.1,
-                        absolute_y_axis_tolerance=0.1,
-                        absolute_z_axis_tolerance=0.1,
+                        absolute_x_axis_tolerance=0.2,
+                        absolute_y_axis_tolerance=0.2,
+                        absolute_z_axis_tolerance=0.2,
                         weight=1.0,
                     )
                 ],
@@ -617,7 +654,7 @@ class MainControlNode(object):
             # >>> STEP 2-1. Case 1. If target_pose is given >>>
             if target_pose is not None:
                 ik_robot_state = self._ik_service_manager.run(
-                    pose_stamped=target_pose,
+                    pose_stamped=PoseStamped(header=header, pose=target_pose),
                     joint_states=self._joint_states_manager.joint_states,
                     end_effector=self._end_effector,
                 )
@@ -635,10 +672,13 @@ class MainControlNode(object):
 
             # >>> STEP 4. Get the current planning scene >>>
             trajectory: RobotTrajectory = self._kinematic_path_service_manager.run(
-                goal_constraints=goal_constraints,
-                path_constraint=path_constraint if use_path_contraint else None,
+                goal_constraints=[goal_constraints],
+                path_constraints=path_constraint if use_path_contraint else None,
                 joint_states=self._joint_states_manager.joint_states,
             )
+
+            if trajectory is None:
+                raise ValueError("Trajectory is None")
 
             # >>> STEP 5. Scale the trajectory >>>
             scaled_trajectory: RobotTrajectory = (
@@ -664,8 +704,27 @@ class MainControlNode(object):
 def main():
     rclpy.init(args=None)
 
+    parser = argparse.ArgumentParser(description="FCN Server Node")
+
+    parser.add_argument(
+        "--grid_data_file",
+        type=str,
+        required=False,
+        default="grid_data.json",
+        help="Path or file name of object bounds. If input is a file name, the file should be located in the 'resource' directory. Required",
+    )
+    parser.add_argument(
+        "--target_cls",
+        type=str,
+        required=True,
+        help="Target class to search. Required",
+    )
+
+    args = parser.parse_args()
+    kagrs = vars(args)
+
     node = Node("main_control_node")
-    main_node = MainControlNode(node=node)
+    main_node = MainControlNode(node=node, **kagrs)
 
     # Spin in a separate thread
     thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)

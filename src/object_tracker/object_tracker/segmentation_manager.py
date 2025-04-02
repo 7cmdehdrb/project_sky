@@ -54,6 +54,7 @@ class SegmentationManager(Manager):
 
         # >>> Data >>>
         self._segmentation_data = []
+        self._available_objects = kwargs.get("available_objects", [])
         # <<< Data <<<
 
     @property
@@ -79,7 +80,7 @@ class SegmentationManager(Manager):
             if (
                 (bbox.conf < self._score_threshold)
                 or not (bbox.cls in self._object_manager.names.keys())
-                or not (self._object_manager.names[bbox.cls] in self._avilable_objects)
+                or not (self._object_manager.names[bbox.cls] in self._available_objects)
             ):
                 """
                 Skip the bounding box if:

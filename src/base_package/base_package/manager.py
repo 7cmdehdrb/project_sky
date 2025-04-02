@@ -172,7 +172,9 @@ class ImageManager(Manager):
 
 # Dictionary class
 class ObjectManager(Manager):
-    def __init__(self):
+    def __init__(self, node: Node, *args, **kwargs):
+        super().__init__(node, *args, **kwargs)
+        
         self.names = {
             "can_1": "coca_cola",
             "can_2": "cyder",
@@ -227,6 +229,10 @@ class TransformManager(Manager):
                 self._node.get_clock().now().to_msg(),
                 timeout=Duration(seconds=0.1),
             )
+            
+            if not valid:
+                raise Exception("Transform is not valid")
+            
             return valid
         except Exception as e:
             self._node.get_logger().warn(

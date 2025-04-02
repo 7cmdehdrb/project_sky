@@ -28,8 +28,7 @@ class DepthTestNode(Node):
 
         self.bridge = cv_bridge.CvBridge()
 
-        topic = "/camera/camera1/depth/image_raw"
-        topic = "/camera/camera1/depth/image_rect_raw"
+        topic = "/camera/camera1/color/image_raw"
         self.depth_subscriber = self.create_subscription(
             Image,
             topic,
@@ -38,8 +37,7 @@ class DepthTestNode(Node):
         )
 
     def depth_callback(self, msg: Image):
-        depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
-        print(f"Depth image dtype: {depth_image.dtype}")
+        print(msg.encoding)
 
 
 def main():

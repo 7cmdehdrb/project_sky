@@ -306,7 +306,6 @@ class ServiceManager(Manager):
 class FK_ServiceManager(ServiceManager):
     def __init__(self, node: Node, *args, **kwargs):
         super().__init__(
-            self,
             node,
             service_name="/compute_fk",
             service_type=GetPositionFK,
@@ -350,7 +349,6 @@ class FK_ServiceManager(ServiceManager):
 class IK_ServiceManager(ServiceManager):
     def __init__(self, node: Node, *args, **kwargs):
         super().__init__(
-            self,
             node,
             service_name="/compute_ik",
             service_type=GetPositionIK,
@@ -404,15 +402,12 @@ class IK_ServiceManager(ServiceManager):
 class GetPlanningScene_ServiceManager(ServiceManager):
     def __init__(self, node: Node, *args, **kwargs):
         super().__init__(
-            self,
             node,
             service_name="/get_planning_scene",
             service_type=GetPlanningScene,
             *args,
             **kwargs,
         )
-
-        self._planning_scene: PlanningScene = None
 
     def run(self) -> PlanningScene:
         request = GetPlanningScene.Request()
@@ -430,15 +425,12 @@ class GetPlanningScene_ServiceManager(ServiceManager):
 class ApplyPlanningScene_ServiceManager(ServiceManager):
     def __init__(self, node: Node, *args, **kwargs):
         super().__init__(
-            self,
             node,
             service_name="/apply_planning_scene",
             service_type=ApplyPlanningScene,
             *args,
             **kwargs,
         )
-
-        self._planning_scene: PlanningScene = None
 
     def run(self):
         pass
@@ -464,7 +456,15 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
                 "collision_objects must be a list of CollisionObject objects."
             )
 
-        scene.world.collision_objects = collision_objects
+        default_bbox_objects = self.append_default_collision_objects()
+        default_collision_objects = self.collision_object_from_bbox_3d(
+            header=Header(
+                stamp=self._node.get_clock().now().to_msg(), frame_id="world"
+            ),
+            bbox_3d=default_bbox_objects,
+        )
+
+        scene.world.collision_objects = collision_objects + default_collision_objects
 
         request = ApplyPlanningScene.Request(scene=scene)
         response: ApplyPlanningScene.Response = self.send_request(request)
@@ -493,12 +493,12 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
 
             new_collision_objects.append(new_obj)
 
-        self._planning_scene.world.collision_objects = collision_objects
+        scene.world.collision_objects = collision_objects
 
         # >>> STEP 3. Create a new planning scene >>>
         self._node.get_logger().info("Resetting the planning scene...")
 
-        request = ApplyPlanningScene.Request(scene=self._planning_scene)
+        request = ApplyPlanningScene.Request(scene=scene)
         response: ApplyPlanningScene.Response = self.send_request(request)
 
         result = self.handle_response(response)
@@ -554,11 +554,64 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
 
         return collision_objects
 
+    def append_default_collision_objects(self) -> List[BoundingBox3D]:
+        data = []
+        data.append(
+            BoundingBox3D(
+                id=999,
+                cls="camera_box",
+                pose=Pose(
+                    position=Point(x=-0.04, y=-0.39, z=0.3),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                scale=Vector3(x=0.15, y=0.06, z=0.6),
+            )
+        )
+
+        # Add Plane Box
+        data.append(
+            BoundingBox3D(
+                id=998,
+                cls="plane_box",
+                pose=Pose(
+                    position=Point(x=0.0, y=0.0, z=-0.5 - 0.01),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                scale=Vector3(x=0.8, y=0.44, z=1.0),
+            )
+        )
+
+        # Add Shelf Box
+        data.append(
+            BoundingBox3D(
+                id=997,
+                cls="shelf_box1",
+                pose=Pose(
+                    position=Point(x=0.0, y=0.6, z=0.23),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                scale=Vector3(x=0.8, y=0.44, z=0.04),
+            )
+        )
+
+        data.append(
+            BoundingBox3D(
+                id=996,
+                cls="shelf_box2",
+                pose=Pose(
+                    position=Point(x=0.0, y=0.6, z=0.7),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                scale=Vector3(x=0.8, y=0.44, z=0.04),
+            )
+        )
+
+        return BoundingBox3DMultiArray(data=data)
+
 
 class CartesianPath_ServiceManager(ServiceManager):
     def __init__(self, node: Node, fraction_threshold: float = 0.999, *args, **kwargs):
         super().__init__(
-            self,
             node,
             service_name="/compute_cartesian_path",
             service_type=GetCartesianPath,
@@ -629,7 +682,6 @@ class KinematicPath_ServiceManager(ServiceManager):
         self, node: Node, planning_group: str = "ur_manipulator", *args, **kwargs
     ):
         super().__init__(
-            self,
             node,
             service_name="/plan_kinematic_path",
             service_type=GetMotionPlan,
@@ -657,7 +709,7 @@ class KinematicPath_ServiceManager(ServiceManager):
         if joint_states is None or goal_constraints is None:
             raise ValueError("joint_states and goal_constraints must be provided.")
 
-        if not isinstance(goal_constraints[0], list):
+        if not isinstance(goal_constraints[0], Constraints):
             raise ValueError("goal_constraints must be a list of Constraints objects.")
 
         # Unused Parameters:
@@ -748,7 +800,6 @@ class KinematicPath_ServiceManager(ServiceManager):
 class ExecuteTrajectory_ServiceManager(Manager):
     def __init__(self, node: Node, *args, **kwargs):
         super().__init__(
-            self,
             node,
             *args,
             **kwargs,
@@ -850,6 +901,28 @@ class ObjectSelectionManager(GridManager):
 
         return None
 
+    def get_target_object_with_grid_id(
+        self, target_objects: BoundingBox3DMultiArray, grid_id: str
+    ):
+        """
+        Get the target object with the class name. e.g. "A1"
+        """
+        if target_objects is None or not isinstance(
+            target_objects, BoundingBox3DMultiArray
+        ):
+            raise ValueError("target_objects must be provided.")
+
+        if len(target_objects.data) == 0:
+            raise ValueError("target_objects must be provided.")
+
+        for target_object in target_objects.data:
+            target_object: BoundingBox3D
+
+            if target_object.cls == grid_id:
+                return target_object
+
+        return None
+
     def get_target_object(
         self, center_coord: Point, target_objects: BoundingBox3DMultiArray
     ):
@@ -863,10 +936,10 @@ class ObjectSelectionManager(GridManager):
         if center_coord is None or not isinstance(center_coord, Point):
             raise ValueError("center_coord must be provided.")
 
-        if not isinstance(target_objects, PoseArray):
+        if not isinstance(target_objects, BoundingBox3DMultiArray):
             raise ValueError("target_objects must be provided.")
 
-        if len(target_objects.poses) == 0:
+        if len(target_objects.data) == 0:
             raise ValueError("target_objects must be provided.")
 
         # >>> STEP 1. Initialize the target object >>>

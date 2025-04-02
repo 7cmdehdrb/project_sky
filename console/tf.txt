@@ -1,6 +1,4 @@
- ros2 run tf2_ros static_transform_publisher -0.04 -0.37 0.45 0.0 0.0 0.7071 0.7071 world camera1_link
+ros2 run tf2_ros static_transform_publisher -0.04 -0.37 0.45 0.0 0.0 0.7071 0.7071 world camera1_link
 
 
- ros2 run tf2_ros static_transform_publisher -0.04 -0.39 
-0.45 0.0 0.0 0.7071 0.7071 world came
-ra1_link
+ros2 run tf2_ros static_transform_publisher -0.04 -0.39 0.45 0.0 0.0 0.7071 0.7071 world camera1_link

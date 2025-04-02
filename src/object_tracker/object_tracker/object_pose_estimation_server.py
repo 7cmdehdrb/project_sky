@@ -6,6 +6,8 @@ import socket
 import struct
 import sys
 import time
+import argparse
+import array
 
 # Third-Party Libraries
 import cv2
@@ -41,7 +43,7 @@ from tf2_ros import *
 # Custom Modules
 from base_package.header import QuaternionAngle, Queue
 from base_package.manager import ImageManager, Manager, ObjectManager
-from object_tracker.real_time_tracking_client import MegaPoseClient
+from object_tracker.megapose_client import MegaPoseClient
 from object_tracker.segmentation_manager import SegmentationManager
 from ament_index_python.packages import get_package_share_directory
 
@@ -88,18 +90,23 @@ class ObjectPoseEstimator(Node):
         if self._use_depth:
             subscribed_topics.append(
                 {
-                    "topic_name": "/camera/camera1/depth/image_raw",
+                    "topic_name": "/camera/camera1/depth/image_rect_raw",
                     "callback": self.depth_image_callback,
                 }
             )
 
+        # TODO: FUCK
+
         self._megapose_client = MegaPoseClient(node=self, *args, **kwargs)
+        kwargs["available_objects"] = self._megapose_client._avilable_objects
+
         self._object_manager = ObjectManager(node=self, *args, **kwargs)
         self._segmentation_manager = SegmentationManager(node=self, *args, **kwargs)
         self._image_manager = ImageManager(
             node=self,
             subscribed_topics=subscribed_topics,
-            published_topics=[] * args,
+            published_topics=[],
+            *args,
             **kwargs,
         )
         # <<< Instance Variables <<<
@@ -136,10 +143,12 @@ class ObjectPoseEstimator(Node):
         # NO MAIN LOOP. This node is only runnning for megapose_request callbacks.
 
     def image_callback(self, msg: Image):
-        self.image = msg
+        self._image = msg
+        # print("Image received.")
 
     def depth_image_callback(self, msg: Image):
-        self.depth_image = msg
+        self._depth_image = msg
+        # print("DImage received.")
 
     def get_object_angle(self, cTo: list) -> float:
         rotation_matrix = np.array(cTo).reshape(4, 4)[:3, :3]
@@ -158,7 +167,7 @@ class ObjectPoseEstimator(Node):
         # >>> STEP 1. Crop image
         if self._image is None or (self._use_depth and self._depth_image is None):
             self.get_logger().warn("No image received.")
-            return
+            return None
 
         offset = np.random.randint(0, 10)
         offset_bbox = [
@@ -197,27 +206,29 @@ class ObjectPoseEstimator(Node):
         np_image = self._image_manager.decode_message(
             self._image, desired_encoding="bgr8"
         )
-        np_image = self._image_manager.crop_image(self._image)
+        np_image = self._image_manager.crop_image(np_image)
 
         # >>> STEP 1-2. Delete unnecessary area
         if self._use_depth:
             np_depth_image = self._image_manager.decode_message(
                 self._depth_image, desired_encoding="passthrough"
             )
-            np_depth_image = self._image_manager.crop_image(self._depth_image)
+            np_depth_image = self._image_manager.crop_image(np_depth_image)
 
             zero_depth_image = (
                 np.ones_like(np_depth_image, dtype=np.uint16) * 5000
             )  # 5m by default
-            zero_depth_image[bbox[0][0] : bbox[0][2], bbox[0][1] : bbox[0][3]] = (
-                np_depth_image[bbox[0][0] : bbox[0][2], bbox[0][1] : bbox[0][3]]
-            )
+            zero_depth_image[
+                int(bbox[0][0]) : int(bbox[0][2]), int(bbox[0][1]) : int(bbox[0][3])
+            ] = np_depth_image[
+                int(bbox[0][0]) : int(bbox[0][2]), int(bbox[0][1]) : int(bbox[0][3])
+            ]
 
         data = {
             "detections": offset_bbox,
             "labels": label,
-            "use_depth": self._use_depth,
-            "refiner_iterations": self._refiner_iterations,
+            "use_depth": bool(self._use_depth),
+            "refiner_iterations": int(self._refiner_iterations),
             "depth_scale_to_m": 0.001,
         }
 
@@ -250,28 +261,32 @@ class ObjectPoseEstimator(Node):
         np_image = self._image_manager.decode_message(
             self._image, desired_encoding="bgr8"
         )
-        np_image = self._image_manager.crop_image(self._image)
+        np_image = self._image_manager.crop_image(np_image)
 
         # >>> STEP 1-2. Delete unnecessary area
         if self._use_depth:
             np_depth_image = self._image_manager.decode_message(
                 self._depth_image, desired_encoding="passthrough"
             )
-            np_depth_image = self._image_manager.crop_image(self._depth_image)
+            np_depth_image = self._image_manager.crop_image(np_depth_image)
 
             zero_depth_image = (
                 np.ones_like(np_depth_image, dtype=np.uint16) * 5000
             )  # 5m by default
-            zero_depth_image[bbox[0][0] : bbox[0][2], bbox[0][1] : bbox[0][3]] = (
-                np_depth_image[bbox[0][0] : bbox[0][2], bbox[0][1] : bbox[0][3]]
-            )
+            zero_depth_image[
+                int(bbox[0][0]) : int(bbox[0][2]), int(bbox[0][1]) : int(bbox[0][3])
+            ] = np_depth_image[
+                int(bbox[0][0]) : int(bbox[0][2]), int(bbox[0][1]) : int(bbox[0][3])
+            ]
 
         data = {
-            "detections": bbox,
+            "detections": [
+                [int(bbox[0][1]), int(bbox[0][0]), int(bbox[0][3]), int(bbox[0][2])]
+            ],
             "labels": label,
             "initial_cTos": [cTo],
-            "use_depth": self._use_depth,
-            "refiner_iterations": self._refiner_iterations,
+            "use_depth": bool(self._use_depth),
+            "refiner_iterations": int(self._refiner_iterations),
             "depth_scale_to_m": 0.001,
         }
 
@@ -298,10 +313,6 @@ class ObjectPoseEstimator(Node):
     ):
         response_msg = BoundingBox3DMultiArray()
 
-        if self.image is None:
-            self.get_logger().warn("No image received.")
-            return response
-
         segmentation_datas = self._segmentation_manager.segmentation_data
 
         for segmentation_data in segmentation_datas:
@@ -309,17 +320,20 @@ class ObjectPoseEstimator(Node):
 
             final_result: dict = None
 
-            label = segmentation_data["label"]
-            bbox: list = segmentation_data["bbox"]
+            label: list = segmentation_data["label"]
+            bbox: array.array = segmentation_data["bbox"]
             conf = segmentation_data["conf"]
 
             with tqdm.tqdm(total=10) as pbar:
                 # >>> STEP 1. Use segmentation data, get first cTo and score
                 for fattempt in range(10):
                     first_result = self.first_megapose_request_callback(
-                        label=label,
+                        label=[self._object_manager.names[label[0]]],
                         bbox=bbox,
                     )
+
+                    if first_result is None:
+                        continue
 
                     fscore, fcTo, fbbox = (
                         first_result["score"],
@@ -341,7 +355,7 @@ class ObjectPoseEstimator(Node):
                         break
 
                     # >>> STEP 2-2. Case 2 - Score is high, but validation is needed
-                    elif fscore > 0.95 and object_angle < 10.0:
+                    elif fscore > 0.95:
                         queue = Queue(max_size=10)
 
                         scTo = fcTo
@@ -350,11 +364,15 @@ class ObjectPoseEstimator(Node):
                         # >>> STEP 2-2-1. Validation loop
                         with tqdm.tqdm(total=100) as pbar2:
                             for sattempt in range(100):
+
                                 second_result = self.second_megapose_request_callback(
-                                    label=label,
+                                    label=[self._object_manager.names[label[0]]],
                                     bbox=bbox,
                                     cTo=scTo,
                                 )
+
+                                if second_result is None:
+                                    continue
 
                                 scTo, sscore, sbbox = (
                                     second_result["cTo"],
@@ -372,9 +390,11 @@ class ObjectPoseEstimator(Node):
                                     f"{label}({fattempt}-{sattempt}): {avg:.3f}/{object_angle:.2f}"
                                 )
 
-                                if avg > 0.99 and object_angle < 5.0:
+                                if avg > 0.95 and object_angle < 5.0:
                                     final_result = second_result
                                     is_data_valid = True
+                                    break
+                                if sattempt > 10 and avg < 0.1:
                                     break
 
                         # >>> STEP 2-2-2. In step 2-2-1, if data is valid, use it
@@ -386,6 +406,10 @@ class ObjectPoseEstimator(Node):
                         pass
 
             # >>> STEP 3. Append final result to response
+            if final_result is None:
+                self.get_logger().warn(f"No valid result for {label}.")
+                continue
+
             bbox_3d = self.post_process_result(result=final_result, label=label)
             response_msg.data.append(bbox_3d)
 
@@ -395,13 +419,15 @@ class ObjectPoseEstimator(Node):
 
         return response
 
-    def post_process_result(self, result: dict, label: str) -> BoundingBox3D:
+    def post_process_result(self, result: dict, label: list) -> BoundingBox3D:
         # Raw result
         score = result["score"]
         cTo = result["cTo"]
 
         cTo_matrix = np.array(cTo).reshape(4, 4)
-        cls = self._object_manager.classes[label]  # e.g. 'alive' -> 'bottle_1'
+        # cls = self._object_manager.classes[label[0]]  # e.g. 'alive' -> 'bottle_1'
+        cls = label[0]
+        cls_name = self._object_manager.names[cls]
 
         offset_matrix = np.zeros((4, 4))
         offset_matrix[0, 3] = 0.06  # TODO: Change this value
@@ -409,12 +435,13 @@ class ObjectPoseEstimator(Node):
 
         cTo_matrix_ros = QuaternionAngle.transform_realsense_to_ros(cTo_matrix)
         translation_matrix = cTo_matrix_ros[:3, 3] + np.array(
-            [0, 0, self._obj_bounds[label]["y"] / 2.0]
+            [0, 0, self._obj_bounds[cls_name]["y"] / 2.0]
         )
 
         rotation_matrix = cTo_matrix_ros[:3, :3]
-        rpy_matrix = QuaternionAngle.euler_from_rotation_matrix(rotation_matrix)
-        quaternion_matrix = QuaternionAngle.quaternion_from_euler(*rpy_matrix)
+        quaternion_matrix = QuaternionAngle.quaternion_from_rotation_matrix(
+            rotation_matrix
+        )
 
         bbox_3d = BoundingBox3D(
             id=self._object_manager.indexs[cls],
@@ -427,9 +454,9 @@ class ObjectPoseEstimator(Node):
                 ),
             ),
             scale=Vector3(
-                x=np.clip(self._obj_bounds[label]["x"], 0.0, 0.05),
-                y=np.clip(self._obj_bounds[label]["y"], 0.0, 0.2),
-                z=np.clip(self._obj_bounds[label]["z"], 0.0, 0.05),
+                x=np.clip(self._obj_bounds[cls_name]["x"], 0.0, 0.05),
+                y=np.clip(self._obj_bounds[cls_name]["y"], 0.0, 0.2),
+                z=np.clip(self._obj_bounds[cls_name]["z"], 0.0, 0.05),
             ),
         )
 
@@ -437,10 +464,29 @@ class ObjectPoseEstimator(Node):
 
 
 def main():
-
     rclpy.init(args=None)
 
-    node = ObjectPoseEstimator()
+    parser = argparse.ArgumentParser(description="FCN Server Node")
+
+    parser.add_argument(
+        "--obj_bounds_file",
+        type=str,
+        required=False,
+        default="obj_bounds.json",
+        help="Path or file name of object bounds. If input is a file name, the file should be located in the 'resource' directory. Required",
+    )
+    parser.add_argument(
+        "--use_depth",
+        type=bool,
+        required=False,
+        default=True,
+        help="Use depth image. Default is False.",
+    )
+
+    args = parser.parse_args()
+    kagrs = vars(args)
+
+    node = ObjectPoseEstimator(**kagrs)
 
     rclpy.spin(node)
 

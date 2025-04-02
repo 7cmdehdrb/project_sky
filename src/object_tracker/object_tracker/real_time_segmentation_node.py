@@ -74,7 +74,7 @@ class RealTimeSegmentationNode(Node):
 
         # >>> Managers >>>
         self._yolo_manager = YoloManager(self, *arg, **kwargs)
-        self._object_manager = ObjectManager()
+        self._object_manager = ObjectManager(self, *arg, **kwargs)
         subscribed_topics = [
             {
                 "topic_name": "/camera/camera1/color/image_raw",
@@ -190,7 +190,7 @@ class RealTimeSegmentationNode(Node):
                 BoundingBox(
                     id=int(np_cls[idx]),
                     cls=str(cls),
-                    conf=float(conf) if difference_ratio > 1.2 else 0.0,
+                    conf=float(conf), # if difference_ratio > 1.2 else 0.0,
                     bbox=[x1, y1, x2, y2],
                 )
             )

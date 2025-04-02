@@ -4,6 +4,7 @@ import sys
 import json
 import numpy as np
 import argparse
+import array
 
 # ROS2
 import rclpy
@@ -146,6 +147,7 @@ class PointCloudGridIdentifier(Node):
         # Exception: If there is no occupied grid in target grids
         if len(occupied_rows) == 0:
             self.get_logger().warn("No occupied grid.")
+            response.moving_row = "Z"
             return response
 
         # Get Minimum row of the occupied grids
@@ -163,19 +165,21 @@ class PointCloudGridIdentifier(Node):
             result.append((grid, not grid.is_occupied))
 
         # Set the response
-        response.action = False
-        response.moving_row = first_occupied_row
-
+        moving_cols = []
         for grid, is_empty in result:
             grid: GridManager.Grid
             if is_empty:
                 response.action = True
-                response.moving_cols.append(grid.col_id)
+                moving_cols.append(grid.col_id)
+
+        response.action = False
+        response.moving_row = first_occupied_row
+        response.moving_cols = moving_cols
 
         action = "Sweaping" if response.action else "Grasping"
 
         self.get_logger().info(
-            f"Response: {action} {response.moving_row}{response.moving_cols}"
+            f"Response: {action} from {response.moving_row}{request.target_col} to {response.moving_row}{response.moving_cols.tolist()}"
         )
 
         return response

@@ -2,34 +2,17 @@ ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.ena
 ros2 launch realsense2_camera rs_launch.py camera_name:="camera2" pointcloud.enable:=true enable_gyro:=true enable_accel:=true usb_port_id:="4-2.1.3" # left
 ros2 launch realsense2_camera rs_launch.py camera_name:="camera3" pointcloud.enable:=true enable_gyro:=true enable_accel:=true usb_port_id:="4-2.1.2" # center
 
-rgb_camera.color_profile:=640x480x30 depth_module.depth_profile:=640x480x30
-rgb_camera.color_profile:=640x480x30 depth_module.depth_profile:=640x480x30
-rgb_camera.color_profile:=640x480x30 depth_module.depth_profile:=640x480x30
 
-4-2.1.2
-4-2.1.3
-4-2.1.4
-053422250869
-ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" rgb_camera.color_profile:="640,480,30" depth_module.depth_profile:="640,480,30" pointcloud.enable:=true enable_gyro:=true enable_accel:=true
-ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" rgb_camera.color_profile:="1280,720,30" depth_module.depth_profile:="640,480,30" pointcloud.enable:=true enable_gyro:=true enable_accel:=true
+ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" rgb_camera.color_profile:="640,480,30" depth_module.depth_profile:="640,480,30" 
+pointcloud.enable:=true enable_gyro:=true enable_accel:=true
+ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" rgb_camera.color_profile:="1280,720,30" depth_module.depth_profile:="640,480,30" 
+pointcloud.enable:=true enable_gyro:=true enable_accel:=true
 
 
-/sys/devices/pci0000:00/0000:00:14.0/usb2/2-10/2-10.1/2-10.1:1.0/video4linux/video0
-
-/sys/devices/pci0000:00/0000:00:14.0/usb2/2-10/2-10.4/2-10.4:1.0/video4linux/video18
-
-
-ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.enable:=true enable_gyro:=true enable_accel:=true rgb_camera.enable_auto_exposure:=false rgb_camera.exposure:="100"
-
-ros2 run tf2_ros static_transform_publisher 0.03 -0.44 0.45 0.0 0.0 0.7071 0.7071 world camera1_link
-
-source ~/.bashrc
+ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.enable:=true rgb_camera.color_profile:="1280,720,30" depth_module.depth_profile:="1280,720,30" 
+rgb_camera.enable_auto_exposure:=false rgb_camera.exposure:="100"
 
 
-SciR -> 계정을 구매하는 것을 고려중
-SoftR -> RISS로 검색하면 21~22년 정보는 무료로 제공됨. 그 이외는 다시 말해야 함.
 
-ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.enable:=true rgb_camera.color_profile:="1280,720,30" depth_module.depth_profile:="1280,720,30"
+ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.enable:=true rgb_camera.enable_auto_exposure:=false rgb_camera.exposure:="100"
 
-
-ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.enable:=true rgb_camera.color_profile:="640,480,30" depth_module.depth_profile:="640,480,30"

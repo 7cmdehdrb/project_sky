@@ -27,6 +27,7 @@ import argparse
 import numpy as np
 import cv2
 import cv_bridge
+from PIL import Image as PILImage
 from matplotlib import pyplot as plt
 from scipy.signal import find_peaks
 from scipy.ndimage import gaussian_filter1d
@@ -40,7 +41,6 @@ from torchvision.models.segmentation import fcn_resnet50
 # Custom Modules
 from base_package.header import PointCloudTransformer, QuaternionAngle
 from base_package.manager import Manager, ImageManager, ObjectManager
-from base_package.enum_class import ObjectDictionary
 from object_tracker.real_time_segmentation import RealTimeSegmentationNode
 from ament_index_python.packages import get_package_share_directory
 
@@ -49,13 +49,13 @@ from ament_index_python.packages import get_package_share_directory
 class FCNModel(nn.Module):
     def __init__(self):
         super(FCNModel, self).__init__()
-        self._model = fcn_resnet50(
+        self.model = fcn_resnet50(
             weights=None
         )  # pretrained=False는 weights=None으로 대체됨
-        self._model.classifier[4] = nn.Conv2d(512, 12, kernel_size=1)
+        self.model.classifier[4] = nn.Conv2d(512, 12, kernel_size=1)
 
     def forward(self, x):
-        return self._model(x)["out"]
+        return self.model(x)["out"]
 
 
 class FCNManager(Manager):
@@ -77,6 +77,8 @@ class FCNManager(Manager):
         model_path = kwargs["model_file"]
         if not os.path.isfile(model_path):
             model_path = os.path.join(resource_path, model_path)
+
+        print(model_path)
 
         # <<< Load Files <<<
 
@@ -102,7 +104,7 @@ class FCNManager(Manager):
         self._model = self._model.to(self._device)
         # <<< Initialize the FCN Model
 
-    def post_process_raw_image(self, img: np.ndarray) -> np.ndarray:
+    def post_process_raw_image(self, img: np.ndarray) -> Tensor:
         if img.ndim == 2:
             img = np.stack([img] * 3, axis=-1)
         elif img.shape[-1] == 4:
@@ -113,7 +115,7 @@ class FCNManager(Manager):
 
         if self._do_transform:
             img = torch.tensor(img, dtype=torch.float32)
-            img = self.transformer(img)
+            img = self._transformer(img)
         else:
             img = torch.tensor(img, dtype=torch.float32)
 
@@ -141,6 +143,8 @@ class FCNManager(Manager):
             [int: max_peak_idx, int[]: res(Available side columns), np.ndarray: data]
         """
 
+        # results = np.clip(results, 0.0, 1.0)
+
         normalized_results = results * np.exp(
             -self._gain * (1 - results)
         )  # 지수 함수로 가중치 적용
@@ -153,6 +157,7 @@ class FCNManager(Manager):
         top_peak_idx, top_peak_datas = self.find_top_peaks(
             data, num_peaks=num_peaks, smooth_sigma=10, min_distance=10
         )
+        # if len(top_peak_idx) == 4:
         top_peak_datas = top_peak_datas * weights
 
         # Sort the top_peak_idx and top_peak_datas in ascending order of top_peak_idx
@@ -275,7 +280,7 @@ class GridManager(Manager):
                 self._is_occupied = state
                 return self._is_occupied
 
-            self._is_occupied = self.points > self.threshold
+            self._is_occupied = self._points > self._threshold
             return self._is_occupied
 
         def get_state(self):
@@ -304,7 +309,7 @@ class GridManager(Manager):
                 rgb=False,
             )
 
-            self.points = points_in_grid.shape[0]
+            self._points = points_in_grid.shape[0]
 
         def get_marker(self, header: Header):
             marker = Marker(
@@ -323,8 +328,8 @@ class GridManager(Manager):
                     z=self._size.z * 0.9,
                 ),
                 color=ColorRGBA(
-                    r=1.0 if self.points > self._threshold else 0.0,
-                    g=0.0 if self.points > self._threshold else 1.0,
+                    r=1.0 if self._points > self._threshold else 0.0,
+                    g=0.0 if self._points > self._threshold else 1.0,
                     b=0.0,
                     a=0.5,
                 ),
@@ -349,10 +354,35 @@ class GridManager(Manager):
                     z=0.01,
                 ),
                 color=ColorRGBA(r=1.0, g=1.0, b=1.0, a=0.7),
-                text=f"{self._row_id}{self._col_id}\t{int(self.points)}",
+                text=f"{self._row_id}{self._col_id}\t{int(self._points)}",
             )
 
             return marker
+
+        def slice_and_get_points(self, points: np.array):
+            xrange = (
+                self._center_coord.x - (self._size.x / 2) * 0.9,
+                self._center_coord.x + (self._size.x / 2) * 0.9,
+            )
+            yrange = (
+                self._center_coord.y - (self._size.y / 2) * 0.9,
+                self._center_coord.y + (self._size.y / 2) * 0.9,
+            )
+            zrange = (
+                self._center_coord.z - (self._size.z / 2) * 0.9,
+                self._center_coord.z + (self._size.z / 2) * 0.9,
+            )
+
+            points_in_grid: np.ndarray = PointCloudTransformer.ROI_Color_filter(
+                points,
+                ROI=True,
+                x_range=xrange,
+                y_range=yrange,
+                z_range=zrange,
+                rgb=False,
+            )
+
+            return points_in_grid
 
     def __init__(self, node: Node, *args, **kwargs):
         super().__init__(node, *args, **kwargs)

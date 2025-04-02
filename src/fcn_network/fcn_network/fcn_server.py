@@ -30,8 +30,16 @@ from matplotlib import pyplot as plt
 
 
 # Custom Modules
-from base_package.manager import ObjectManager, ImageManager
+from base_package.manager import ObjectManager, ImageManager, Manager
 from fcn_network.fcn_manager import FCNModel, FCNManager, GridManager
+
+# PyTorch
+import torch
+from torch import nn, Tensor
+from torchvision.transforms import Normalize
+from torchvision.models.segmentation import fcn_resnet50
+
+from ament_index_python.packages import get_package_share_directory
 
 
 class FCNServerNode(Node):
@@ -48,8 +56,8 @@ class FCNServerNode(Node):
             },
         ]
         image_publications = [
-            # {"topic_name": self.get_name() + "/processed_image"},
-            # {"topic_name": self.get_name() + "/plot_image"},
+            {"topic_name": self.get_name() + "/processed_image"},
+            {"topic_name": self.get_name() + "/plot_image"},
         ]
         self._image_manager = ImageManager(
             self,
@@ -58,12 +66,17 @@ class FCNServerNode(Node):
             *arg,
             **kwargs,
         )
-        self._object_manager = ObjectManager()
+        self._object_manager = ObjectManager(self, *arg, **kwargs)
         # <<< Managers <<<
 
         # >>> ROS2 >>>
         self._srv = self.create_service(
             FCNRequest, "/fcn_request", self.fcn_request_callback
+        )
+        self.test = self.create_publisher(
+            Image,
+            "/fcn_test",
+            qos_profile=qos_profile_system_default,
         )
         # <<< ROS2 <<<
 
@@ -75,7 +88,7 @@ class FCNServerNode(Node):
 
         # >>> Main
         self.get_logger().info("FCN Server Node has been initialized.")
-        self.create_timer(1.0, self.publish_processed_image)
+        # self.create_timer(1.0, self.publish_processed_image)
         # <<< Main
 
     def fcn_image_callback(self, msg: Image):
@@ -111,11 +124,29 @@ class FCNServerNode(Node):
         )
         np_image = self._image_manager.crop_image(np_image)
 
+        print(np_image.shape)
+
+        # print("H")
+        # print(np_image[:10, :10, :])
+
         # Predict the image
         outputs = self._fcn_manager.predict(np_image)
 
         # Get the target output
         target_output = outputs[self._object_manager.indexs[request.target_cls]]
+
+        # print("Mean")
+        # print(mean)
+        # print("Std")
+        # print(std)
+
+        # test_img = self._image_manager.encode_message(target_output, encoding="mono8")
+        # self.test.publish(test_img)
+
+        # target_output = target_output * 255
+        # target_output = np.clip(target_output, 0, 255).astype(np.uint8)
+
+        self.publish_processed_image(target_output, None, None)
 
         # TODO: Add the weights
         weights = [1.0] * self._grid_manager.get_colums_length()
@@ -148,6 +179,8 @@ class FCNServerNode(Node):
             target_output_normalized, encoding="mono8"
         )
         self._image_manager.publish(self.get_name() + "/processed_image", msg)
+
+        return None
 
         # >>> STEP 2. Publish Plot Image >>>
         fig = plt.figure(figsize=(16, 9))

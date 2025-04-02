@@ -85,6 +85,10 @@ class MegaPoseClient(object):
         self._last_time = self._node.get_clock().now()
         self._avilable_objects = self.send_list_objects_request(self._socket)
         # <<< Data <<<
+        
+    @property
+    def available_objects(self):
+        return self._avilable_objects
 
     def camera_info_callback(self, msg: CameraInfo):
         if self._is_configured is True:
@@ -106,7 +110,7 @@ class MegaPoseClient(object):
                 f"Image size is same as server size: {msg.width}, {msg.height}"
             )
             self._node.get_logger().info(f"Calibrating K: {K}")
-            self._node.get_logger().info()
+            self._node.get_logger().info("")
 
             K = K.copy()
 
@@ -226,10 +230,10 @@ class MegaPoseClient(object):
         data = img_shape_bytes + img_bytes + json_bytes
 
         # **(5) 서버에 데이터 전송**
-        self.send_message(self.socket, MegaPoseClient.ServerMessage.GET_POSE, data)
+        self.send_message(self._socket, MegaPoseClient.ServerMessage.GET_POSE, data)
 
         # **(6) 서버 응답 수신**
-        code, response_buffer = self.receive_message(self.socket)
+        code, response_buffer = self.receive_message(self._socket)
         if code == MegaPoseClient.ServerMessage.RET_POSE:
             json_str = self.read_string(response_buffer)
             decoded_json = json.loads(json_str)

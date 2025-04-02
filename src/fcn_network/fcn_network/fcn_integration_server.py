@@ -61,15 +61,20 @@ class FCN_Integration_Client_Manager(Manager):
 
     @property
     def fcn_result(self):
-        return self._response
+        row, col = self._response
+        if row is not None and col is not None:
+            self._response = [None, None]
+            return [row, col]
+
+        return [None, None]
 
 
 class FCN_Integration_Server_Node(Node):
-    def __init__(self):
+    def __init__(self, *arg, **kwargs):
         super().__init__("fcn_client_node")
 
         # >>> Manager >>>
-        self._object_manager = ObjectManager()
+        self._object_manager = ObjectManager(self, *arg, **kwargs)
         # <<< Manager <<<
 
         # >>> Service Responses
@@ -112,6 +117,9 @@ class FCN_Integration_Server_Node(Node):
         self.create_timer(1.0, self.run)
 
     def trigger_callback(self, msg: String):
+        if self._target_cls is not None:
+            return None
+
         if msg.data in self._object_manager.names.keys():
             self._target_cls = msg.data
             self.get_logger().info(f"Received class name: {msg.data}")
@@ -144,7 +152,7 @@ class FCN_Integration_Server_Node(Node):
         self._fcn_response = future.result()
 
     def fcn_occupied_response_callback(self, future: Future):
-        self.fcn_occupied_response = future.result()
+        self._fcn_occupied_response = future.result()
 
     def run(self):
         if self._target_cls is None:
@@ -152,27 +160,35 @@ class FCN_Integration_Server_Node(Node):
 
         # >>> STEP 1: Send FCN Request
         if self._fcn_response is None:
-            self._fcn_response = self.send_fcn_request(self._target_cls)
+            self.send_fcn_request(self._target_cls)
+            self.get_logger().info(f"Send FCN Request: {self._target_cls}")
+            return None
 
         # >>> STEP 2: Send FCN Occupied Request
         if self._fcn_response is not None and self._fcn_occupied_response is None:
-            self._fcn_occupied_response = self.send_fcn_occupied_request(
-                self._fcn_response
-            )
-            self.get_logger().info(
-                f"FCN Occupied Response: {self._fcn_occupied_response}"
-            )
+            self.send_fcn_occupied_request(self._fcn_response)
+            self.get_logger().info(f"Send FCN Occupied Request: {self._fcn_response}")
+            return None
 
         # >>> STEP 3. Post-Process FCN Occupied Response and Publish Results
         if self._fcn_occupied_response is not None:
+            if self._fcn_occupied_response.moving_row == "Z":
+                self.get_logger().warn("No available row to move.")
+                self.reset()
+                return None
+
+            # Target to move
             response_text = f"{self._fcn_occupied_response.moving_row},{self._fcn_response.target_col}"
-            self.get_logger().info(f"Response: {response_text}")
+            self.get_logger().info(f"Publish response: {response_text}")
             self._result_publisher.publish(String(data=response_text))
 
             # >>> STEP 4. Reset
-            self._target_cls = None
-            self._fcn_response = None
-            self._fcn_occupied_response = None
+            self.reset()
+
+    def reset(self):
+        self._target_cls = None
+        self._fcn_response = None
+        self._fcn_occupied_response = None
 
 
 def main():
