@@ -254,6 +254,7 @@ class MainControlNode(object):
                 self._state = State.GRASPING_HOMING1
             elif self._state == State.GARSPING_UNGRASPING:
                 self._state = State.FCN_POSITIONING
+                self._control_action = None
             else:
                 self._state = State(self._state.value + 1)
 
@@ -263,6 +264,7 @@ class MainControlNode(object):
                 self._state = State.SWEEPING_HOMING1
             elif self._state == State.SWEEPING_HOMING2:
                 self._state = State.FCN_POSITIONING
+                self._control_action = None
             else:
                 self._state = State(self._state.value + 1)
 
