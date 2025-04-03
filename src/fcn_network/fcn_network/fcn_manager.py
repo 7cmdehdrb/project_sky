@@ -239,7 +239,8 @@ class FCNClientManager(Manager):
         if self._cls is None:
             return None
 
-        request = FCNIntegratedRequest.Request(target_cls=self._cls)
+        request = FCNIntegratedRequest.Request()
+        request.target_cls = self._cls
         response: FCNIntegratedRequest.Response = self._client.call(request)
 
         self._cls = None
@@ -338,7 +339,7 @@ class GridManager(Manager):
             marker = Marker(
                 header=header,
                 ns=f"{self._row_id}{self._col_id}_text",
-                id=((ord(self._row_id) - 64) * 10) + self.col_id + 100,
+                id=((ord(self._row_id) - 64) * 10) + self._col_id + 100,
                 type=Marker.TEXT_VIEW_FACING,
                 action=Marker.ADD,
                 pose=Pose(
@@ -428,6 +429,36 @@ class GridManager(Manager):
         def grids(self):
             return self._grids
 
+        def __lt__(self, other):
+            if not isinstance(other, GridManager.Line):
+                return NotImplemented
+            return ord(self._id) < ord(other._id)
+
+        def __gt__(self, other):
+            if not isinstance(other, GridManager.Line):
+                return NotImplemented
+            return ord(self._id) > ord(other._id)
+
+        def __le__(self, other):
+            if not isinstance(other, GridManager.Line):
+                return NotImplemented
+            return ord(self._id) <= ord(other._id)
+
+        def __ge__(self, other):
+            if not isinstance(other, GridManager.Line):
+                return NotImplemented
+            return ord(self._id) >= ord(other._id)
+
+        def __eq__(self, other):
+            if not isinstance(other, GridManager.Line):
+                return NotImplemented
+            return ord(self._id) == ord(other._id)
+
+        def __ne__(self, other):
+            if not isinstance(other, GridManager.Line):
+                return NotImplemented
+            return ord(self._id) != ord(other._id)
+
     def __init__(self, node: Node, *args, **kwargs):
         super().__init__(node, *args, **kwargs)
 
@@ -468,11 +499,11 @@ class GridManager(Manager):
         point_threshold = grid_identifier["point_threshold"]
 
         grids = []
-        cols = [GridManager.Line(id=str(col)) for col in cols]  # e.g. '0'
-        rows = [GridManager.Line(id=str(row)) for row in rows]  # e.g. 'A'
+        cols_line = [GridManager.Line(id=str(col)) for col in cols]  # e.g. '0'
+        rows_line = [GridManager.Line(id=str(row)) for row in rows]  # e.g. 'A'
 
-        for r, row_line, row in zip(range(len(rows)), rows, rows):
-            for c, col_line, col in zip(range(len(rows)), cols, cols):
+        for r, row_line, row in zip(range(len(rows)), rows_line, rows):
+            for c, col_line, col in zip(range(len(cols)), cols_line, cols):
                 center_coord = Point(
                     x=start_center_coord.x + grid_size.x * r,
                     y=start_center_coord.y - grid_size.y * c,
@@ -487,12 +518,16 @@ class GridManager(Manager):
                     threshold=point_threshold,
                 )
 
+                self._node.get_logger().info(
+                    f"Append grid {row}{col} at {center_coord.x:.3f}, {center_coord.y:.3f}, {center_coord.z:.3f}"
+                )
+
                 # Append grid to row and column, and grids
                 row_line.append(grid, by="col")
                 col_line.append(grid, by="row")
                 grids.append(grid)
 
-        return grids, rows, cols
+        return grids, rows_line, cols_line
 
     @property
     def rows(self):
@@ -545,7 +580,8 @@ class FCN_Integration_Manager(Manager):
         """
 
         # >>> STEP 1. FCN Request >>>
-        fcn_request = FCNRequest.Request(targer_cls=target_cls)
+        fcn_request = FCNRequest.Request()
+        fcn_request.target_cls = target_cls
         fcn_response: FCNRequest.Response = self._fcn_client.call(fcn_request)
 
         if fcn_response is None:
@@ -557,10 +593,9 @@ class FCN_Integration_Manager(Manager):
             return fcn_response, None
 
         # >>> STEP 2. FCN Occupied Request >>>
-        fcn_occupied_request = FCNOccupiedRequest.Request(
-            empty_cols=fcn_response.empty_cols.tolist(),
-            target_col=fcn_response.target_col,
-        )
+        fcn_occupied_request = FCNOccupiedRequest.Request()
+        fcn_occupied_request.empty_cols = fcn_response.empty_cols.tolist()
+        fcn_occupied_request.target_col = fcn_response.target_col
 
         fcn_occupied_response: FCNOccupiedRequest.Response = (
             self._fcn_occupied_client.call(fcn_occupied_request)

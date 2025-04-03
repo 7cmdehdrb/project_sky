@@ -594,10 +594,10 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
                 id=997,
                 cls="shelf_box1",
                 pose=Pose(
-                    position=Point(x=0.0, y=0.6, z=0.23),
+                    position=Point(x=0.0, y=0.6, z=0.0),
                     orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
                 ),
-                scale=Vector3(x=0.8, y=0.44, z=0.04),
+                scale=Vector3(x=0.8, y=0.44, z=0.5),
             )
         )
 
@@ -610,6 +610,30 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
                     orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
                 ),
                 scale=Vector3(x=0.8, y=0.44, z=0.04),
+            )
+        )
+
+        data.append(
+            BoundingBox3D(
+                id=995,
+                cls="shelf_side_box1",
+                pose=Pose(
+                    position=Point(x=0.54, y=0.6, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                scale=Vector3(x=0.1, y=0.4, z=1.0),
+            )
+        )
+
+        data.append(
+            BoundingBox3D(
+                id=995,
+                cls="shelf_side_box2",
+                pose=Pose(
+                    position=Point(x=-0.52, y=0.6, z=0.0),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                ),
+                scale=Vector3(x=0.1, y=0.4, z=1.0),
             )
         )
 
@@ -656,14 +680,15 @@ class CartesianPath_ServiceManager(ServiceManager):
             avoid_collisions=True,
         )
 
-        res = self.send_request(request)
+        response: GetCartesianPath.Response = self.send_request(request)
+        result = self.handle_response(response)
 
-        return res
+        return result
 
     def handle_response(
         self,
         response: GetCartesianPath.Response,
-    ) -> Path:
+    ) -> RobotTrajectory:
         code = response.error_code.val
         if code != MoveItErrorCodes.SUCCESS:
             code_type = self.get_error_code(code)
@@ -894,8 +919,6 @@ class ObjectSelectionManager(GridManager):
     def __init__(self, node: Node, *args, **kwargs):
         super().__init__(node, *args, **kwargs)
 
-        self._grids, self._grids_dict = self.create_grid()
-
     def get_center_coord(self, row: str, col: int):
         """
         Get the center coordinate of the grid cell.
@@ -903,7 +926,7 @@ class ObjectSelectionManager(GridManager):
         for grid in self._grids:
             grid: ObjectSelectionManager.Grid
 
-            if grid.row_id == row and grid.col_id == col:
+            if grid.row == row and grid.col == col:
                 return grid.center_coord
 
         return None

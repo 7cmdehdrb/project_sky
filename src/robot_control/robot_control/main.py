@@ -31,7 +31,7 @@ import argparse
 
 # custom
 from base_package.manager import ObjectManager, TransformManager
-from fcn_network.fcn_manager import FCN_Integration_Manager
+from fcn_network.fcn_manager import FCN_Integration_Manager, GridManager
 from object_tracker.megapose_client import MegaPoseClient
 from object_tracker.object_pose_estimation_server import ObjectPoseEstimationManager
 from robot_control.control_manager import (
@@ -70,6 +70,7 @@ class State(Enum):
     SWEEPING_TARGET_AIMING = 21  # Move to the front of the target object
     SWEEPING_TARGET_POSITIONING = 22  # Move to the side of the target object
     SWEEPING_SWEEPING = 23  # Sweep the target object
+    SWEEPING_ROLLBACK = 29
     SWEEPING_HOME_AIMING = 24  # Move to the front of the target object
     SWEEPING_HOMING2 = 25  # Move to the home pose
 
@@ -83,6 +84,8 @@ class MainControlNode(object):
         self._joint_states_manager = JointStatesManager(
             node=self._node, *args, **kwargs
         )
+
+        self._grid_manager = GridManager(node=self._node, *args, **kwargs)
 
         self._object_pose_estimation_manager = ObjectPoseEstimationManager(
             node=self._node, *args, **kwargs
@@ -149,6 +152,7 @@ class MainControlNode(object):
             State.SWEEPING_TARGET_AIMING.value: self.sweep_target_aiming,
             State.SWEEPING_TARGET_POSITIONING.value: self.sweep_target_positioning,
             State.SWEEPING_SWEEPING.value: self.sweep,
+            State.SWEEPING_ROLLBACK.value: self.sweep_target_positioning,
             State.SWEEPING_HOME_AIMING.value: self.home_aiming,
             State.SWEEPING_HOMING2.value: self.home_positioning,
         }
@@ -214,24 +218,56 @@ class MainControlNode(object):
                 -0.006377998982564748,
             ],
         )
+        self._sweeping_joints = JointState(
+            name=[
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+                "shoulder_pan_joint",
+            ],
+            position=[
+                -0.20895393312487798,
+                -2.306225299835205,
+                -3.866194864312643,
+                6.038235187530518,
+                1.6495410203933716,
+                -0.2675898710833948,
+            ],
+        )
 
         self._home_pose: PoseStamped = None
         self._drop_pose: PoseStamped = None
+        self._sweeping_pose: PoseStamped = None
         # <<< Unique Joint States <<<
+
+        # >>> TEST >>>
+        self._planning_attempt = 0
+        self._moving_row: int = None
+        self._moving_col_pub = self._node.create_publisher(
+            UInt16, "/moving_row", qos_profile_system_default
+        )
+        self._target_pose_pub = self._node.create_publisher(
+            PoseStamped,
+            "/target_pose",
+            qos_profile_system_default,
+        )
 
     # >>> Main Control Method >>>
 
     def run(self):
         self._node.get_logger().info(f"State: {self._state.name}")
 
-        is_success = self._operations[self._state.value](
+        self._operations[self._state.value](
             header=Header(
                 stamp=self._node.get_clock().now().to_msg(),
                 frame_id="world",
             )
         )
-        if is_success:
-            self._state = State.ACTION_SELECTING
+
+        if self._control_action is not None and self._moving_row is not None:
+            self._moving_col_pub.publish(UInt16(data=int(self._moving_row)))
 
     # <<< Main Control Method <<<
 
@@ -247,12 +283,14 @@ class MainControlNode(object):
                 self._state = (
                     State.FCN_SEARCHING
                 )  # After FCN_SEARCHING, control action will be defined
+            elif self._state == State.FCN_POSITIONING:
+                self._state = State.WAITING
 
         # CASE 1. Grasping
         elif self._control_action.action:
             if self._state == State.FCN_SEARCHING:
-                self._state = State.GRASPING_HOMING1
-            elif self._state == State.GARSPING_UNGRASPING:
+                self._state = State.SWEEPING_HOMING1
+            elif self._state == State.SWEEPING_HOMING2:
                 self._state = State.FCN_POSITIONING
                 self._control_action = None
             else:
@@ -261,12 +299,14 @@ class MainControlNode(object):
         # CASE 2. Sweeping
         else:
             if self._state == State.FCN_SEARCHING:
-                self._state = State.SWEEPING_HOMING1
-            elif self._state == State.SWEEPING_HOMING2:
+                self._state = State.GRASPING_HOMING1
+            elif self._state == State.GARSPING_UNGRASPING:
                 self._state = State.FCN_POSITIONING
                 self._control_action = None
             else:
                 self._state = State(self._state.value + 1)
+
+        return True
 
     def waiting(self, header: Header):
         """
@@ -283,6 +323,12 @@ class MainControlNode(object):
                     joint_states=self._dropping_joints,
                     end_effector=self._end_effector,
                 )
+            if self._sweeping_pose is None:
+                self._sweeping_pose = self._fk_service_manager.run(
+                    joint_states=self._sweeping_joints,
+                    end_effector=self._end_effector,
+                )
+            self.action_selecting(header=header)
             return True
 
         except ValueError as ve:
@@ -336,6 +382,7 @@ class MainControlNode(object):
 
                     if is_applying_success and is_applying_default_success:
                         self._target_objects = bbox_3d
+                        self.action_selecting(header=header)
                         return True
 
         except ValueError as ve:
@@ -389,9 +436,13 @@ class MainControlNode(object):
                     target_object=target_object,
                 )
 
+                print(f"TARGET : {self._control_action.target_id}")
+                print(f"GOAL : {self._control_action.goal_ids}")
+
                 self._node.get_logger().info(
                     f"FCN Searching Success: {target_id} / {self._control_action.target_object.cls}"
                 )
+                self.action_selecting(header=header)
                 return True
 
         except ValueError as ex:
@@ -419,7 +470,9 @@ class MainControlNode(object):
                 use_path_contraint=False,
             )
 
-            return control_success
+            if control_success:
+                self.action_selecting(header=header)
+                return control_success
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -436,23 +489,29 @@ class MainControlNode(object):
         Target pose is the pose which is located above the target object.
         """
         try:
+            target_pose = Pose(
+                position=Point(
+                    x=self._home_pose.pose.position.x,
+                    y=self._home_pose.pose.position.y,
+                    z=self._home_pose.pose.position.z,
+                ),
+                orientation=self._home_pose.pose.orientation,
+            )
+
             control_success = self.control(
                 header=header,
-                target_pose=Pose(
-                    position=Point(
-                        x=self._home_pose.pose.position.x,
-                        y=self._home_pose.pose.position.y,
-                        z=self._home_pose.pose.position.z + 0.05,
-                    ),
-                    orientation=self._home_pose.pose.orientation,
-                ),
-                joint_states=None,
+                target_pose=None,  # target_pose,
+                joint_states=self._home_joints,
                 tolerance=0.01,
                 scale_factor=0.5,
                 use_path_contraint=False,
             )
 
-            return control_success
+            self._target_pose_pub.publish(PoseStamped(header=header, pose=target_pose))
+
+            if control_success:
+                self.action_selecting(header=header)
+                return control_success
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -471,24 +530,29 @@ class MainControlNode(object):
         """
         try:
             target_pose: Pose = self._control_action.target_object.pose
+            target_pose = Pose(
+                position=Point(
+                    x=target_pose.position.x,
+                    y=target_pose.position.y - 0.15,
+                    z=target_pose.position.z,
+                ),
+                orientation=self._home_pose.pose.orientation,
+            )
 
             control_success = self.control(
                 header=header,
-                target_pose=Pose(
-                    position=Point(
-                        x=target_pose.position.x,
-                        y=target_pose.position.y - 0.1,
-                        z=target_pose.position.z,
-                    ),
-                    orientation=self._home_pose.pose.orientation,
-                ),
+                target_pose=target_pose,
                 joint_states=None,
                 tolerance=0.05,
                 scale_factor=0.5,
-                use_path_contraint=False,
+                use_path_contraint=True,
             )
 
-            return control_success
+            self._target_pose_pub.publish(PoseStamped(header=header, pose=target_pose))
+
+            if control_success:
+                self.action_selecting(header=header)
+                return control_success
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -506,24 +570,29 @@ class MainControlNode(object):
         """
         try:
             target_pose: Pose = self._control_action.target_object.pose
+            target_pose = Pose(
+                position=Point(
+                    x=target_pose.position.x,
+                    y=target_pose.position.y,
+                    z=target_pose.position.z - 0.02,
+                ),
+                orientation=self._home_pose.pose.orientation,
+            )
 
             control_success = self.control(
                 header=header,
-                target_pose=Pose(
-                    position=Point(
-                        x=target_pose.position.x,
-                        y=target_pose.position.y,
-                        z=target_pose.position.z - 0.02,
-                    ),
-                    orientation=self._home_pose.pose.orientation,
-                ),
+                target_pose=target_pose,
                 joint_states=None,
                 tolerance=0.02,
                 scale_factor=0.2,
                 use_path_contraint=False,
             )
 
-            return control_success
+            self._target_pose_pub.publish(PoseStamped(header=header, pose=target_pose))
+
+            if control_success:
+                self.action_selecting(header=header)
+                return control_success
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -543,23 +612,29 @@ class MainControlNode(object):
             target_pose: Pose = self._control_action.target_object.pose
             home_pose: Pose = self._home_pose.pose
 
+            target_pose = Pose(
+                position=Point(
+                    x=target_pose.position.x,
+                    y=home_pose.position.y + 0.05,
+                    z=target_pose.position.z + 0.05,
+                ),
+                orientation=self._home_pose.pose.orientation,
+            )
+
             control_success = self.control(
                 header=header,
-                target_pose=Pose(
-                    position=Point(
-                        x=target_pose.position.x,
-                        y=home_pose.position.y + 0.05,
-                        z=target_pose.position.z + 0.05,
-                    ),
-                    orientation=self._home_pose.pose.orientation,
-                ),
+                target_pose=target_pose,
                 joint_states=None,
                 tolerance=0.01,
                 scale_factor=0.5,
                 use_path_contraint=False,
             )
 
-            return control_success
+            self._target_pose_pub.publish(PoseStamped(header=header, pose=target_pose))
+
+            if control_success:
+                self.action_selecting(header=header)
+                return control_success
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -586,7 +661,9 @@ class MainControlNode(object):
                 use_path_contraint=False,
             )
 
-            return control_success
+            if control_success:
+                self.action_selecting(header=header)
+                return control_success
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -607,36 +684,62 @@ class MainControlNode(object):
             target_pose: Pose = self._control_action.target_object.pose
 
             target_row = int(self._control_action.target_id[1])  # e.g. 'A1' -> 1
-            moving_rows = max(
-                [int(id[1]) for id in self._control_action.goal_ids]
-            )  # e.g. ['A0', 'A2'] -> [0, 2]
-            direction = target_row < moving_rows  # True for right, False for left
-            offset = -0.1 if direction else 0.1
+
+            if self._planning_attempt // 2 == 0:
+                moving_row = max(
+                    [int(id[1]) for id in self._control_action.goal_ids]
+                )  # e.g. ['A0', 'A2'] -> [0, 2]
+            else:
+                moving_row = min([int(id[1]) for id in self._control_action.goal_ids])
+
+            direction = target_row < moving_row  # True for right, False for left
+
+            offset = -0.07 if direction else 0.07
+
+            self._moving_row = moving_row
+
+            target_pose = Pose(
+                position=Point(
+                    x=target_pose.position.x + offset,
+                    y=target_pose.position.y - 0.15,
+                    z=target_pose.position.z,
+                ),
+                orientation=self._home_pose.pose.orientation,
+            )
 
             control_success = self.control(
                 header=header,
-                target_pose=Pose(
-                    position=Point(
-                        x=target_pose.position.x + offset,
-                        y=target_pose.position.y - 0.1,
-                        z=target_pose.position.z,
-                    ),
-                    orientation=self._home_pose.pose.orientation,
-                ),
+                target_pose=target_pose,
                 joint_states=None,
-                tolerance=0.05,
+                tolerance=0.1,
                 scale_factor=0.5,
                 use_path_contraint=False,
             )
 
-            return control_success
+            # control_success = self.control_caterian_path(
+            #     header=header,
+            #     target_pose=target_pose,
+            #     joint_states=None,
+            #     tolerance=None,
+            #     scale_factor=0.5,
+            #     use_path_contraint=None,
+            # )
+
+            self._target_pose_pub.publish(PoseStamped(header=header, pose=target_pose))
+
+            if control_success:
+                self.action_selecting(header=header)
+                self._planning_attempt = 0
+                return control_success
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
+            self._planning_attempt += 1
 
         except Exception as e:
             self._node.get_logger().error(f"Unexpected Error: {e}")
             self._node.get_logger().error("Target Aiming Failed")
+            self._planning_attempt += 1
 
         return False
 
@@ -653,25 +756,31 @@ class MainControlNode(object):
                 [int(id[1]) for id in self._control_action.goal_ids]
             )  # e.g. ['A0', 'A2'] -> [0, 2]
             direction = target_row < moving_rows  # True for right, False for left
-            offset = -0.1 if direction else 0.1
+            offset = -0.07 if direction else 0.07
+
+            target_pose = Pose(
+                position=Point(
+                    x=target_pose.position.x + offset,
+                    y=target_pose.position.y,
+                    z=target_pose.position.z,
+                ),
+                orientation=self._sweeping_pose.pose.orientation,
+            )
 
             control_success = self.control(
                 header=header,
-                target_pose=Pose(
-                    position=Point(
-                        x=target_pose.position.x + offset,
-                        y=target_pose.position.y,
-                        z=target_pose.position.z - 0.02,
-                    ),
-                    orientation=self._home_pose.pose.orientation,
-                ),
+                target_pose=target_pose,
                 joint_states=None,
                 tolerance=0.02,
-                scale_factor=0.2,
+                scale_factor=0.5,
                 use_path_contraint=False,
             )
 
-            return control_success
+            self._target_pose_pub.publish(PoseStamped(header=header, pose=target_pose))
+
+            if control_success:
+                self.action_selecting(header=header)
+                return control_success
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -688,9 +797,14 @@ class MainControlNode(object):
         Target pose is the side pose of the target object.
         """
         try:
-            if self._apply_planning_scene_service_manager.reset_planning_scene():
-                if (
-                    self._apply_planning_scene_service_manager.append_default_collision_objects()
+            current_scene = self._get_planning_scene_service_manager.run()
+            if self._apply_planning_scene_service_manager.reset_planning_scene(
+                scene=current_scene
+            ):
+                current_scene = self._get_planning_scene_service_manager.run()
+                if self._apply_planning_scene_service_manager.append_default_collision_objects(
+                    header=header,
+                    scene=current_scene,
                 ):
 
                     target_pose: Pose = self._control_action.target_object.pose
@@ -704,25 +818,33 @@ class MainControlNode(object):
                     direction = (
                         target_row < moving_rows
                     )  # True for right, False for left
-                    offset = 0.15 if direction else -0.15
+                    sweep_distance = self._grid_manager.get_grid_data()[
+                        "grid_identifier"
+                    ]["grid_size"]["y"]
+
+                    offset = sweep_distance if direction else -sweep_distance
+
+                    target_pose = Pose(
+                        position=Point(
+                            x=target_pose.position.x + offset,
+                            y=target_pose.position.y,
+                            z=target_pose.position.z,
+                        ),
+                        orientation=self._sweeping_pose.pose.orientation,
+                    )
 
                     control_success = self.control(
                         header=header,
-                        target_pose=Pose(
-                            position=Point(
-                                x=target_pose.position.x + offset,
-                                y=target_pose.position.y,
-                                z=target_pose.position.z - 0.02,
-                            ),
-                            orientation=self._home_pose.pose.orientation,
-                        ),
+                        target_pose=target_pose,
                         joint_states=None,
                         tolerance=0.02,
                         scale_factor=0.2,
                         use_path_contraint=False,
                     )
 
-                    return control_success
+                    if control_success:
+                        self.action_selecting(header=header)
+                        return control_success
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -740,6 +862,7 @@ class MainControlNode(object):
         """
         self._gripper_action_manager.control_gripper(open=False)
         if self._gripper_action_manager.is_finished is True:
+            self.action_selecting(header=header)
             return True
 
         return False
@@ -751,6 +874,7 @@ class MainControlNode(object):
         try:
             self._gripper_action_manager.control_gripper(open=True)
             if self._gripper_action_manager.is_finished is True:
+                self.action_selecting(header=header)
                 return True
 
         except ValueError as ve:
@@ -763,6 +887,49 @@ class MainControlNode(object):
         return False
 
     # >>> ETC >>>
+    def control_caterian_path(
+        self,
+        header: Header,
+        target_pose: Pose,
+        joint_states: JointState,
+        tolerance: float,
+        scale_factor: float,
+        use_path_contraint: bool = False,
+    ):
+        # >>> STEP 0. Exception handling >>>
+        if target_pose is None:
+            raise ValueError("Target_pose must be provided.")
+
+        try:
+            # >>> STEP 4. Get the current planning scene >>>
+            trajectory: RobotTrajectory = self._cartesian_path_service_manager.run(
+                header=header,
+                waypoints=[target_pose],
+                joint_states=self._joint_states_manager.joint_states,
+                end_effector=self._end_effector,
+            )
+
+            if trajectory is None:
+                raise ValueError("Trajectory is None")
+
+            # >>> STEP 5. Scale the trajectory >>>
+            scaled_trajectory: RobotTrajectory = (
+                self._execute_trajectory_service_manager.scale_trajectory(
+                    trajectory=trajectory,
+                    scale_factor=scale_factor,
+                )
+            )
+
+            # >>> STEP 6. Get the current planning scene >>>
+            self._execute_trajectory_service_manager.run(trajectory=scaled_trajectory)
+
+            return True
+
+        except Exception as e:
+            self._node.get_logger().error(f"Unexpected Error: {e}")
+            self._node.get_logger().error("Control Failed")
+            return False
+
     def control(
         self,
         header: Header,
@@ -795,9 +962,9 @@ class MainControlNode(object):
                         header=header,
                         link_name=self._end_effector,
                         orientation=self._home_pose.pose.orientation,
-                        absolute_x_axis_tolerance=0.2,
-                        absolute_y_axis_tolerance=0.2,
-                        absolute_z_axis_tolerance=0.2,
+                        absolute_x_axis_tolerance=0.3,
+                        absolute_y_axis_tolerance=0.3,
+                        absolute_z_axis_tolerance=0.3,
                         weight=1.0,
                     )
                 ],

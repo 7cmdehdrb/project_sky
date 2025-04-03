@@ -139,7 +139,7 @@ class PointCloudGridIdentifier(Node):
                     id = grid.row  # the row id of first occupied grid
 
                     if ord(id) > ord(first_occupied_grid.row):
-                        results.append(grid.row)
+                        results.append(grid.col)
                     break
 
         response.action = len(results) != 0  # True : Sweaping, False : Grasping
@@ -173,7 +173,7 @@ class PointCloudGridIdentifier(Node):
         )
 
         marker_array = MarkerArray()
-        for grid in self._grids:
+        for grid in self._grid_manager.grids:
             grid: GridManager.Grid
 
             grid.slice(transformed_points)
