@@ -70,10 +70,8 @@ class ObjectPoseEstimator(Node):
             self.megapose_request_callback,
             qos_profile=qos_profile_system_default,
         )
-        # <<< ROS2 <<<
-
         self._pointcloud_msg: PointCloud2 = None
-        self._grids, self._grids_dict = self._grid_manager.create_grid()
+        # <<< ROS2 <<<
 
         # NO MAIN LOOP. This node is only runnning for megapose_request callbacks.
 
@@ -95,7 +93,7 @@ class ObjectPoseEstimator(Node):
             points, transform_matrix
         )
 
-        for grid in self._grids:
+        for grid in self._grid_manager.grids:
             grid: GridManager.Grid
 
             points_in_grid: np.ndarray = grid.slice_and_get_points(transformed_points)
@@ -111,8 +109,8 @@ class ObjectPoseEstimator(Node):
             z_scale = np.clip(np.abs(z_max - z_min), 0.0, 0.1)
 
             bbox = BoundingBox3D(
-                id=((ord(grid.row_id) - 64) * 10) + grid.col_id,
-                cls=f"{grid.row_id}{grid.col_id}",
+                id=((ord(grid.row) - 64) * 10) + grid.col,
+                cls=f"{grid.row}{grid.col}",
                 pose=Pose(
                     position=Point(
                         x=float(center_point[0]),
@@ -126,7 +124,7 @@ class ObjectPoseEstimator(Node):
                 ),
             )
 
-            print(f"Grid {grid.row_id}{grid.col_id}: {bbox.pose.position}")
+            print(f"Grid {grid.row}{grid.col}: {bbox.pose.position}")
             response_msg.data.append(bbox)
 
         print(len(response_msg.data))

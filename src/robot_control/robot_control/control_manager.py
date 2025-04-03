@@ -456,15 +456,7 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
                 "collision_objects must be a list of CollisionObject objects."
             )
 
-        default_bbox_objects = self.append_default_collision_objects()
-        default_collision_objects = self.collision_object_from_bbox_3d(
-            header=Header(
-                stamp=self._node.get_clock().now().to_msg(), frame_id="world"
-            ),
-            bbox_3d=default_bbox_objects,
-        )
-
-        scene.world.collision_objects = collision_objects + default_collision_objects
+        scene.world.collision_objects = collision_objects
 
         request = ApplyPlanningScene.Request(scene=scene)
         response: ApplyPlanningScene.Response = self.send_request(request)
@@ -501,9 +493,9 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
         request = ApplyPlanningScene.Request(scene=scene)
         response: ApplyPlanningScene.Response = self.send_request(request)
 
-        result = self.handle_response(response)
+        is_success_reset_wolrd = self.handle_response(response)
 
-        return result
+        return is_success_reset_wolrd
 
     def create_collision_object(
         self, id: str, header: Header, pose: Pose, scale: Vector3, operation
@@ -554,7 +546,22 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
 
         return collision_objects
 
-    def append_default_collision_objects(self) -> List[BoundingBox3D]:
+    def append_default_collision_objects(
+        self, scene: PlanningScene, header: Header
+    ) -> bool:
+
+        default_collision_objects_bbox = self.get_default_collision_objects()
+        collision_objects = self.collision_object_from_bbox_3d(
+            header=header,
+            bbox_3d=default_collision_objects_bbox,
+        )
+
+        result: bool = self.add_collistion_objects(
+            collision_objects=collision_objects, scene=scene
+        )
+        return result
+
+    def get_default_collision_objects(self) -> List[BoundingBox3D]:
         data = []
         data.append(
             BoundingBox3D(
@@ -966,3 +973,33 @@ class ObjectSelectionManager(GridManager):
                 result_target_object = target_object
 
         return result_target_object
+
+
+class ControlAction(object):
+    def __init__(
+        self,
+        target_id: str,
+        goal_ids: List[str],
+        action: bool,
+        target_object: BoundingBox3D,
+    ):
+        self._target_id = target_id
+        self._goal_ids = goal_ids
+        self._action = action
+        self._target_object = target_object
+
+    @property
+    def target_id(self) -> str:
+        return self._target_id
+
+    @property
+    def goal_ids(self) -> List[str]:
+        return self._goal_ids
+
+    @property
+    def action(self) -> bool:
+        return self._action
+
+    @property
+    def target_object(self) -> BoundingBox3D:
+        return self._target_object

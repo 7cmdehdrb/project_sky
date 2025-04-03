@@ -31,7 +31,7 @@ import argparse
 
 # custom
 from base_package.manager import ObjectManager, TransformManager
-from fcn_network.fcn_integration_server import FCN_Integration_Client_Manager
+from fcn_network.fcn_manager import FCN_Integration_Manager
 from object_tracker.megapose_client import MegaPoseClient
 from object_tracker.object_pose_estimation_server import ObjectPoseEstimationManager
 from robot_control.control_manager import (
@@ -45,22 +45,33 @@ from robot_control.control_manager import (
     ExecuteTrajectory_ServiceManager,
     JointStatesManager,
     ObjectSelectionManager,
+    ControlAction,
 )
 
 
 class State(Enum):
-    WAITING = -1
-    MEGAPOSE_SEARCHING = 0
-    FCN_SEARCHING = 1
-    GRASPING_POSITIONING = 2
-    TARGET_AIMING = 3
-    TARGET_POSITIONING = 4
-    GRASPING = 5
-    HOME_AIMING = 6
-    HOME_POSITIONING = 7
-    DROP_POSITIONING = 8
-    UNGRASPING = 9
-    FCN_POSITIONING = 10
+    ACTION_SELECTING = -2
+    WAITING = -1  # Reset the planning scene, add home and drop pose
+
+    FCN_POSITIONING = 0  # Move to the waiting pose
+    MEGAPOSE_SEARCHING = 1  #  Get the object pose estimation
+    FCN_SEARCHING = 2  # Send FCN request to get the target grid
+
+    GRASPING_HOMING1 = 10
+    GARSPING_TARGET_AIMING = 11  # Move to the front of the target object
+    GARSPING_TARGET_POSITIONING = 12  # Move to the target object pose
+    GARSPING_GRASPING = 13
+    GARSPING_HOME_AIMING = 14  # Move to the front of the target object
+    GARSPING_HOMING2 = 15
+    GARSPING_DROP_POSITIONING = 16  # Move to the drop pose
+    GARSPING_UNGRASPING = 17
+
+    SWEEPING_HOMING1 = 20  # Move to the home pose
+    SWEEPING_TARGET_AIMING = 21  # Move to the front of the target object
+    SWEEPING_TARGET_POSITIONING = 22  # Move to the side of the target object
+    SWEEPING_SWEEPING = 23  # Sweep the target object
+    SWEEPING_HOME_AIMING = 24  # Move to the front of the target object
+    SWEEPING_HOMING2 = 25  # Move to the home pose
 
 
 class MainControlNode(object):
@@ -77,7 +88,7 @@ class MainControlNode(object):
             node=self._node, *args, **kwargs
         )
 
-        self._fcn_integration_client_manager = FCN_Integration_Client_Manager(
+        self._fcn_integration_manager = FCN_Integration_Manager(
             node=self._node, *args, **kwargs
         )
 
@@ -117,24 +128,35 @@ class MainControlNode(object):
         self._target_cls = kwargs["target_cls"]
         self._state = State.WAITING
         self._operations = {
+            # LEVEL 0
+            State.ACTION_SELECTING.value: self.action_selecting,
             State.WAITING.value: self.waiting,
+            # LEVEL 1
+            State.FCN_POSITIONING.value: self.fcn_positioning,
             State.MEGAPOSE_SEARCHING.value: self.megapose_searching,
             State.FCN_SEARCHING.value: self.fcn_searching,
-            State.GRASPING_POSITIONING.value: self.grasping_positioning,
-            State.TARGET_AIMING.value: self.target_aiming,
-            State.TARGET_POSITIONING.value: self.target_positioning,
-            State.GRASPING.value: self.grasping,
-            State.HOME_AIMING.value: self.home_aiming,
-            State.HOME_POSITIONING.value: self.home_positioning,
-            State.DROP_POSITIONING.value: self.drop_positioning,
-            State.UNGRASPING.value: self.ungrasping,
-            State.FCN_POSITIONING.value: self.fcn_positioning,
+            # LEVEL 3
+            State.GRASPING_HOMING1.value: self.home_positioning,
+            State.GARSPING_TARGET_AIMING.value: self.target_aiming,
+            State.GARSPING_TARGET_POSITIONING.value: self.target_positioning,
+            State.GARSPING_GRASPING.value: self.grasping,
+            State.GARSPING_HOME_AIMING.value: self.home_aiming,
+            State.GARSPING_HOMING2.value: self.home_positioning,
+            State.GARSPING_DROP_POSITIONING.value: self.drop_positioning,
+            State.GARSPING_UNGRASPING.value: self.ungrasping,
+            # LEVEL 4
+            State.SWEEPING_HOMING1.value: self.home_positioning,
+            State.SWEEPING_TARGET_AIMING.value: self.sweep_target_aiming,
+            State.SWEEPING_TARGET_POSITIONING.value: self.sweep_target_positioning,
+            State.SWEEPING_SWEEPING.value: self.sweep,
+            State.SWEEPING_HOME_AIMING.value: self.home_aiming,
+            State.SWEEPING_HOMING2.value: self.home_positioning,
         }
         # <<< Parameters <<<
 
         # >>> Data >>>
         self._target_objects: BoundingBox3DMultiArray = None
-        self._target_object: BoundingBox3D = None
+        self._control_action: ControlAction = None
         # <<< Data <<<
 
         # >>> Unique Joint States >>>
@@ -201,32 +223,64 @@ class MainControlNode(object):
 
     def run(self):
         self._node.get_logger().info(f"State: {self._state.name}")
-        header = Header(
-            stamp=self._node.get_clock().now().to_msg(),
-            frame_id="world",
+
+        is_success = self._operations[self._state.value](
+            header=Header(
+                stamp=self._node.get_clock().now().to_msg(),
+                frame_id="world",
+            )
         )
-        self._operations[self._state.value](header=header)
+        if is_success:
+            self._state = State.ACTION_SELECTING
 
     # <<< Main Control Method <<<
 
     # >>> Operation Methods >>>
+
+    # >>> LEVEL 0 >>>
+    def action_selecting(self, header: Header):
+        # CASE 0. Before action selecting
+        if self._control_action is None:
+            if self._state == State.WAITING:
+                self._state = State.MEGAPOSE_SEARCHING
+            elif self._state == State.MEGAPOSE_SEARCHING:
+                self._state = (
+                    State.FCN_SEARCHING
+                )  # After FCN_SEARCHING, control action will be defined
+
+        # CASE 1. Grasping
+        elif self._control_action.action:
+            if self._state == State.FCN_SEARCHING:
+                self._state = State.GRASPING_HOMING1
+            elif self._state == State.GARSPING_UNGRASPING:
+                self._state = State.FCN_POSITIONING
+            else:
+                self._state = State(self._state.value + 1)
+
+        # CASE 2. Sweeping
+        else:
+            if self._state == State.FCN_SEARCHING:
+                self._state = State.SWEEPING_HOMING1
+            elif self._state == State.SWEEPING_HOMING2:
+                self._state = State.FCN_POSITIONING
+            else:
+                self._state = State(self._state.value + 1)
+
     def waiting(self, header: Header):
         """
         Initialize home pose and drop pose
         """
         try:
-            self._home_pose = self._fk_service_manager.run(
-                joint_states=self._home_joints,
-                end_effector=self._end_effector,
-            )
-            self._drop_pose = self._fk_service_manager.run(
-                joint_states=self._dropping_joints,
-                end_effector=self._end_effector,
-            )
-
-            self._node.get_logger().info("Waiting Success")
-            self._state = State(self._state.value + 1)
-
+            if self._home_pose is None:
+                self._home_pose = self._fk_service_manager.run(
+                    joint_states=self._home_joints,
+                    end_effector=self._end_effector,
+                )
+            if self._drop_pose is None:
+                self._drop_pose = self._fk_service_manager.run(
+                    joint_states=self._dropping_joints,
+                    end_effector=self._end_effector,
+                )
             return True
 
         except ValueError as ve:
@@ -238,6 +292,7 @@ class MainControlNode(object):
 
         return False
 
+    # >>> LEVEL 1 >>>
     def megapose_searching(self, header: Header):
         """
         Run megapose client to get all the objects' pose
@@ -272,10 +327,13 @@ class MainControlNode(object):
                     is_applying_success = self._apply_planning_scene_service_manager.add_collistion_objects(
                         collision_objects=collision_objects, scene=current_scene
                     )
-                    if is_applying_success:
+                    is_applying_default_success = self._apply_planning_scene_service_manager.append_default_collision_objects(
+                        header=header,
+                        scene=current_scene,
+                    )
+
+                    if is_applying_success and is_applying_default_success:
                         self._target_objects = bbox_3d
-                        self._node.get_logger().info("Apply Planning Scene Success")
-                        self._state = State(self._state.value + 1)
                         return True
 
         except ValueError as ve:
@@ -292,34 +350,47 @@ class MainControlNode(object):
         Run FCN Integration Client to get the target object
         """
         try:
-            self._fcn_integration_client_manager.send_fcn_integration_request(
-                target_cls=self._target_cls
+            fcn_response, fcn_occupied_response = self._fcn_integration_manager.run(
+                target_cls=self._target_cls,
             )
 
-            row, col = self._fcn_integration_client_manager.fcn_result
+            if fcn_response is None or fcn_occupied_response is None:
+                raise ValueError("FCN response or FCN occupied response is None")
 
-            if row is not None and col is not None:
-                # center_coord = self._object_selection_manager.get_center_coord(
-                #     row=row, col=int(col)
-                # )
-                # target_object: BoundingBox3D = (
-                #     self._object_selection_manager.get_target_object(
-                #         center_coord=center_coord, target_objects=self._target_objects
-                #     )
-                # )
-                target_object: BoundingBox3D = (
-                    self._object_selection_manager.get_target_object_with_grid_id(
-                        target_objects=self._target_objects, grid_id=f"{row}{col}"
-                    )
+            target_id = f"{fcn_occupied_response.moving_row}{fcn_response.target_col}"  # e.g. 'A1'
+            goal_ids = [
+                f"{fcn_occupied_response.moving_row}{col}"
+                for col in fcn_occupied_response.moving_cols
+            ]  # e.g. ['A0', 'A2']
+            action = fcn_occupied_response.action  # True for sweep, False for grasp
+
+            # center_coord = self._object_selection_manager.get_center_coord(
+            #     row=row, col=int(col)
+            # )
+            # target_object: BoundingBox3D = (
+            #     self._object_selection_manager.get_target_object(
+            #         center_coord=center_coord, target_objects=self._target_objects
+            #     )
+            # )
+
+            target_object: BoundingBox3D = (
+                self._object_selection_manager.get_target_object_with_grid_id(
+                    target_objects=self._target_objects, grid_id=target_id
+                )
+            )
+
+            if target_object is not None:
+                self._control_action = ControlAction(
+                    target_id=target_id,
+                    goal_ids=goal_ids,
+                    action=action,
+                    target_object=target_object,
                 )
 
-                if target_object is not None:
-                    self._target_object = target_object
-                    self._state = State(self._state.value + 1)
-                    self._node.get_logger().info(
-                        f"FCN Searching Success: {row}, {col} / {self._target_object.cls}"
-                    )
-                    return True
+                self._node.get_logger().info(
+                    f"FCN Searching Success: {target_id} / {self._control_action.target_object.cls}"
+                )
+                return True
 
         except ValueError as ex:
             self._node.get_logger().warn(f"Value Error: {ex}")
@@ -330,184 +401,30 @@ class MainControlNode(object):
 
         return False
 
-    def grasping_positioning(self, header: Header):
+    def fcn_positioning(self, header: Header):
         """
         Run kinematic path service to get the target object pose.
-        Target pose is home joints
+        Target pose is waiting joints.
         """
+
         try:
-            self._gripper_action_manager.control_gripper(open=True)
             control_success = self.control(
                 header=header,
                 target_pose=None,  # To ignore the target pose
-                joint_states=self._home_joints,
+                joint_states=self._waiting_joints,
                 tolerance=0.01,
                 scale_factor=0.5,
                 use_path_contraint=False,
             )
 
-            if control_success:
-                self._state = State(self._state.value + 1)
-                return True
-            else:
-                return False
+            return control_success
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
 
         except Exception as e:
             self._node.get_logger().error(f"Unexpected Error: {e}")
-            self._node.get_logger().error("Grasping Positioning Failed")
-
-        return False
-
-    def target_aiming(self, header: Header):
-        """
-        Run kinematic path service to get the target object pose.
-        Target pose is the pose which is located in front of the target object
-        """
-        try:
-            target_pose: Pose = self._target_object.pose
-
-            control_success = self.control(
-                header=header,
-                target_pose=Pose(
-                    position=Point(
-                        x=target_pose.position.x,
-                        y=target_pose.position.y - 0.1,
-                        z=target_pose.position.z,
-                    ),
-                    orientation=self._home_pose.pose.orientation,
-                ),
-                joint_states=None,
-                tolerance=0.05,
-                scale_factor=0.5,
-                use_path_contraint=False,
-            )
-
-            if control_success:
-                self._state = State(self._state.value + 1)
-                return True
-            else:
-                return False
-
-        except ValueError as ve:
-            self._node.get_logger().warn(f"Value Error: {ve}")
-
-        except Exception as e:
-            self._node.get_logger().error(f"Unexpected Error: {e}")
-            self._node.get_logger().error("Target Aiming Failed")
-
-        return False
-
-    def target_positioning(self, header: Header):
-        """
-        Run kinematic path service to get the target object pose.
-        Target pose is the pose of the target object.
-        """
-        try:
-            target_pose: Pose = self._target_object.pose
-
-            control_success = self.control(
-                header=header,
-                target_pose=Pose(
-                    position=Point(
-                        x=target_pose.position.x,
-                        y=target_pose.position.y,
-                        z=target_pose.position.z - 0.02,
-                    ),
-                    orientation=self._home_pose.pose.orientation,
-                ),
-                joint_states=None,
-                tolerance=0.02,
-                scale_factor=0.2,
-                use_path_contraint=False,
-            )
-
-            if control_success:
-                self._state = State(self._state.value + 1)
-                return True
-            else:
-                return False
-
-        except ValueError as ve:
-            self._node.get_logger().warn(f"Value Error: {ve}")
-
-        except Exception as e:
-            self._node.get_logger().error(f"Unexpected Error: {e}")
-            self._node.get_logger().error("Target Positioning Failed")
-
-        return False
-
-    def grasping(self, header: Header):
-        """
-        Run gripper action to grasp the target object
-        """
-        self._gripper_action_manager.control_gripper(open=False)
-        if self._gripper_action_manager.is_finished is True:
-            self._state = State(self._state.value + 1)
-            self._node.get_logger().info("Grasping Success")
-            return True
-
-        return False
-
-    def ungrasping(self, header: Header):
-        """
-        Run gripper action to ungrasp the target object
-        """
-        try:
-            self._gripper_action_manager.control_gripper(open=True)
-            if self._gripper_action_manager.is_finished is True:
-                self._state = State(self._state.value + 1)
-                self._node.get_logger().info("Ungrasing Success")
-                return True
-
-        except ValueError as ve:
-            self._node.get_logger().warn(f"Value Error: {ve}")
-
-        except Exception as e:
-            self._node.get_logger().error(f"Unexpected Error: {e}")
-            self._node.get_logger().error("Ungrasing Failed")
-
-        return False
-
-    def home_aiming(self, header: Header):
-        """
-        Run kinematic path service to get the target object pose.
-        Target pose is the pose which is located the front and above the target object.
-        """
-        try:
-            target_pose: Pose = self._target_object.pose
-            home_pose: Pose = self._home_pose.pose
-
-            control_success = self.control(
-                header=header,
-                target_pose=Pose(
-                    position=Point(
-                        x=target_pose.position.x,
-                        y=home_pose.position.y + 0.05,
-                        z=target_pose.position.z + 0.05,
-                    ),
-                    orientation=self._home_pose.pose.orientation,
-                ),
-                joint_states=None,
-                tolerance=0.01,
-                scale_factor=0.5,
-                use_path_contraint=False,
-            )
-
-            if control_success:
-                self._state = State(self._state.value + 1)
-                return True
-            else:
-                return False
-
-        except ValueError as ve:
-            self._node.get_logger().warn(f"Value Error: {ve}")
-
-        except Exception as e:
-            self._node.get_logger().error(f"Unexpected Error: {e}")
-            self._node.get_logger().error("Home Aiming Failed")
+            self._node.get_logger().error("FCN Positioning Failed")
 
         return False
 
@@ -533,11 +450,7 @@ class MainControlNode(object):
                 use_path_contraint=False,
             )
 
-            if control_success:
-                self._state = State(self._state.value + 1)
-                return True
-            else:
-                return False
+            return control_success
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -545,6 +458,113 @@ class MainControlNode(object):
         except Exception as e:
             self._node.get_logger().error(f"Unexpected Error: {e}")
             self._node.get_logger().error("Home Positioning Failed")
+
+        return False
+
+    # >>> LEVEL 3 >>>
+    def target_aiming(self, header: Header):
+        """
+        Run kinematic path service to get the target object pose.
+        Target pose is the pose which is located in front of the target object
+        """
+        try:
+            target_pose: Pose = self._control_action.target_object.pose
+
+            control_success = self.control(
+                header=header,
+                target_pose=Pose(
+                    position=Point(
+                        x=target_pose.position.x,
+                        y=target_pose.position.y - 0.1,
+                        z=target_pose.position.z,
+                    ),
+                    orientation=self._home_pose.pose.orientation,
+                ),
+                joint_states=None,
+                tolerance=0.05,
+                scale_factor=0.5,
+                use_path_contraint=False,
+            )
+
+            return control_success
+
+        except ValueError as ve:
+            self._node.get_logger().warn(f"Value Error: {ve}")
+
+        except Exception as e:
+            self._node.get_logger().error(f"Unexpected Error: {e}")
+            self._node.get_logger().error("Target Aiming Failed")
+
+        return False
+
+    def target_positioning(self, header: Header):
+        """
+        Run kinematic path service to get the target object pose.
+        Target pose is the pose of the target object.
+        """
+        try:
+            target_pose: Pose = self._control_action.target_object.pose
+
+            control_success = self.control(
+                header=header,
+                target_pose=Pose(
+                    position=Point(
+                        x=target_pose.position.x,
+                        y=target_pose.position.y,
+                        z=target_pose.position.z - 0.02,
+                    ),
+                    orientation=self._home_pose.pose.orientation,
+                ),
+                joint_states=None,
+                tolerance=0.02,
+                scale_factor=0.2,
+                use_path_contraint=False,
+            )
+
+            return control_success
+
+        except ValueError as ve:
+            self._node.get_logger().warn(f"Value Error: {ve}")
+
+        except Exception as e:
+            self._node.get_logger().error(f"Unexpected Error: {e}")
+            self._node.get_logger().error("Target Positioning Failed")
+
+        return False
+
+    def home_aiming(self, header: Header):
+        """
+        Run kinematic path service to get the target object pose.
+        Target pose is the pose which is located the front and above the target object.
+        """
+        try:
+            target_pose: Pose = self._control_action.target_object.pose
+            home_pose: Pose = self._home_pose.pose
+
+            control_success = self.control(
+                header=header,
+                target_pose=Pose(
+                    position=Point(
+                        x=target_pose.position.x,
+                        y=home_pose.position.y + 0.05,
+                        z=target_pose.position.z + 0.05,
+                    ),
+                    orientation=self._home_pose.pose.orientation,
+                ),
+                joint_states=None,
+                tolerance=0.01,
+                scale_factor=0.5,
+                use_path_contraint=False,
+            )
+
+            return control_success
+
+        except ValueError as ve:
+            self._node.get_logger().warn(f"Value Error: {ve}")
+
+        except Exception as e:
+            self._node.get_logger().error(f"Unexpected Error: {e}")
+            self._node.get_logger().error("Home Aiming Failed")
 
         return False
 
@@ -564,11 +584,7 @@ class MainControlNode(object):
                 use_path_contraint=False,
             )
 
-            if control_success:
-                self._state = State(self._state.value + 1)
-                return True
-            else:
-                return False
+            return control_success
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
@@ -579,38 +595,172 @@ class MainControlNode(object):
 
         return False
 
-    def fcn_positioning(self, header: Header):
+    # >>> LEVEL 4 >>>
+    def sweep_target_aiming(self, header: Header):
         """
         Run kinematic path service to get the target object pose.
-        Target pose is waiting joints.
+        Target pose is the pose which is the front/side of the target object
         """
-
         try:
+            target_pose: Pose = self._control_action.target_object.pose
+
+            target_row = int(self._control_action.target_id[1])  # e.g. 'A1' -> 1
+            moving_rows = max(
+                [int(id[1]) for id in self._control_action.goal_ids]
+            )  # e.g. ['A0', 'A2'] -> [0, 2]
+            direction = target_row < moving_rows  # True for right, False for left
+            offset = -0.1 if direction else 0.1
+
             control_success = self.control(
                 header=header,
-                target_pose=None,  # To ignore the target pose
-                joint_states=self._waiting_joints,
-                tolerance=0.01,
+                target_pose=Pose(
+                    position=Point(
+                        x=target_pose.position.x + offset,
+                        y=target_pose.position.y - 0.1,
+                        z=target_pose.position.z,
+                    ),
+                    orientation=self._home_pose.pose.orientation,
+                ),
+                joint_states=None,
+                tolerance=0.05,
                 scale_factor=0.5,
                 use_path_contraint=False,
             )
 
-            if control_success:
-                # self._state = State(self._state.value + 1)
-                self._state = State.WAITING
-                return True
-            else:
-                return False
+            return control_success
 
         except ValueError as ve:
             self._node.get_logger().warn(f"Value Error: {ve}")
 
         except Exception as e:
             self._node.get_logger().error(f"Unexpected Error: {e}")
-            self._node.get_logger().error("FCN Positioning Failed")
+            self._node.get_logger().error("Target Aiming Failed")
 
         return False
 
+    def sweep_target_positioning(self, header: Header):
+        """
+        Run kinematic path service to get the target object pose.
+        Target pose is the side pose of the target object.
+        """
+        try:
+            target_pose: Pose = self._control_action.target_object.pose
+
+            target_row = int(self._control_action.target_id[1])  # e.g. 'A1' -> 1
+            moving_rows = max(
+                [int(id[1]) for id in self._control_action.goal_ids]
+            )  # e.g. ['A0', 'A2'] -> [0, 2]
+            direction = target_row < moving_rows  # True for right, False for left
+            offset = -0.1 if direction else 0.1
+
+            control_success = self.control(
+                header=header,
+                target_pose=Pose(
+                    position=Point(
+                        x=target_pose.position.x + offset,
+                        y=target_pose.position.y,
+                        z=target_pose.position.z - 0.02,
+                    ),
+                    orientation=self._home_pose.pose.orientation,
+                ),
+                joint_states=None,
+                tolerance=0.02,
+                scale_factor=0.2,
+                use_path_contraint=False,
+            )
+
+            return control_success
+
+        except ValueError as ve:
+            self._node.get_logger().warn(f"Value Error: {ve}")
+
+        except Exception as e:
+            self._node.get_logger().error(f"Unexpected Error: {e}")
+            self._node.get_logger().error("Target Positioning Failed")
+
+        return False
+
+    def sweep(self, header: Header):
+        """
+        Run kinematic path service to get the target object pose.
+        Target pose is the side pose of the target object.
+        """
+        try:
+            if self._apply_planning_scene_service_manager.reset_planning_scene():
+                if (
+                    self._apply_planning_scene_service_manager.append_default_collision_objects()
+                ):
+
+                    target_pose: Pose = self._control_action.target_object.pose
+
+                    target_row = int(
+                        self._control_action.target_id[1]
+                    )  # e.g. 'A1' -> 1
+                    moving_rows = max(
+                        [int(id[1]) for id in self._control_action.goal_ids]
+                    )  # e.g. ['A0', 'A2'] -> [0, 2]
+                    direction = (
+                        target_row < moving_rows
+                    )  # True for right, False for left
+                    offset = 0.15 if direction else -0.15
+
+                    control_success = self.control(
+                        header=header,
+                        target_pose=Pose(
+                            position=Point(
+                                x=target_pose.position.x + offset,
+                                y=target_pose.position.y,
+                                z=target_pose.position.z - 0.02,
+                            ),
+                            orientation=self._home_pose.pose.orientation,
+                        ),
+                        joint_states=None,
+                        tolerance=0.02,
+                        scale_factor=0.2,
+                        use_path_contraint=False,
+                    )
+
+                    return control_success
+
+        except ValueError as ve:
+            self._node.get_logger().warn(f"Value Error: {ve}")
+
+        except Exception as e:
+            self._node.get_logger().error(f"Unexpected Error: {e}")
+            self._node.get_logger().error("Target Positioning Failed")
+
+        return False
+
+    # >>> LEVEL 5 >>>
+    def grasping(self, header: Header):
+        """
+        Run gripper action to grasp the target object
+        """
+        self._gripper_action_manager.control_gripper(open=False)
+        if self._gripper_action_manager.is_finished is True:
+            return True
+
+        return False
+
+    def ungrasping(self, header: Header):
+        """
+        Run gripper action to ungrasp the target object
+        """
+        try:
+            self._gripper_action_manager.control_gripper(open=True)
+            if self._gripper_action_manager.is_finished is True:
+                return True
+
+        except ValueError as ve:
+            self._node.get_logger().warn(f"Value Error: {ve}")
+
+        except Exception as e:
+            self._node.get_logger().error(f"Unexpected Error: {e}")
+            self._node.get_logger().error("Ungrasing Failed")
+
+        return False
+
+    # >>> ETC >>>
     def control(
         self,
         header: Header,

@@ -114,64 +114,58 @@ class FCNServerNode(Node):
             self.get_logger().warn("No image received.")
             return response
 
-        self.get_logger().info(f"Request Received: {request.target_cls}")
+        try:
 
-        # Get the class name from the target class
+            self.get_logger().info(f"Request Received: {request.target_cls}")
 
-        # Crop the image
-        np_image = self._image_manager.decode_message(
-            self._fcn_image, desired_encoding="rgb8"
-        )
-        np_image = self._image_manager.crop_image(np_image)
+            # Crop the image
+            np_image = self._image_manager.decode_message(
+                self._fcn_image, desired_encoding="rgb8"
+            )
+            np_image = self._image_manager.crop_image(np_image)
 
-        print(np_image.shape)
+            # Predict the image
+            outputs = self._fcn_manager.predict(np_image)
 
-        # print("H")
-        # print(np_image[:10, :10, :])
+            # Get the target output
+            target_output = outputs[self._object_manager.indexs[request.target_cls]]
 
-        # Predict the image
-        outputs = self._fcn_manager.predict(np_image)
+            # Publish the processed image
+            self.publish_output_image(image_output=target_output)
 
-        # Get the target output
-        target_output = outputs[self._object_manager.indexs[request.target_cls]]
+            # TODO: Add the weights
+            weights = [1.0] * self._grid_manager.get_colums_length()
+            target_col, empty_cols, _ = self._fcn_manager.post_process_results(
+                target_output, weights
+            )
 
-        # print("Mean")
-        # print(mean)
-        # print("Std")
-        # print(std)
+            # Set the response
+            response.target_col = target_col
+            response.empty_cols = empty_cols
 
-        # test_img = self._image_manager.encode_message(target_output, encoding="mono8")
-        # self.test.publish(test_img)
+            self.get_logger().info(
+                f"Return response: target_col={target_col}, empty_cols={empty_cols}"
+            )
 
-        # target_output = target_output * 255
-        # target_output = np.clip(target_output, 0, 255).astype(np.uint8)
+        except ValueError as ve:
+            self.get_logger().error(
+                f"ValueError occurred on fcn_request_callback: {ve}"
+            )
+            response.target_col = -1
+            response.empty_cols = []
 
-        self.publish_processed_image(target_output, None, None)
+        except Exception as e:
+            self.get_logger().error(f"Error occurred: {e}")
+            response.target_col = -1
+            response.empty_cols = []
 
-        # TODO: Add the weights
-        weights = [1.0] * self._grid_manager.get_colums_length()
-        target_col, empty_cols, _ = self._fcn_manager.post_process_results(
-            target_output, weights
-        )
+        finally:
+            return response
 
-        # Set the response
-        response.target_col = target_col
-        response.empty_cols = empty_cols
-
-        self.get_logger().info(
-            f"Return response: target_col={target_col}, empty_cols={empty_cols}"
-        )
-
-        return response
-
-    def publish_processed_image(
-        self, image_output: np.ndarray, processed_data: np.ndarray, top_peak_idx: list
-    ):
+    def publish_output_image(self, image_output: np.ndarray):
         """
-        Publish the processed image and plot.
+        Publish the processed image.
         """
-
-        # >>> STEP 1. Publish FCN Processed Image >>>
         target_output_normalized = cv2.normalize(
             image_output, None, 0, 255, cv2.NORM_MINMAX
         ).astype(np.uint8)
@@ -180,9 +174,10 @@ class FCNServerNode(Node):
         )
         self._image_manager.publish(self.get_name() + "/processed_image", msg)
 
-        return None
-
-        # >>> STEP 2. Publish Plot Image >>>
+    def publish_result_image(self, processed_data: np.ndarray, top_peak_idx: List[int]):
+        """
+        Publish the plot image.
+        """
         fig = plt.figure(figsize=(16, 9))
         plt.plot(processed_data)
 
@@ -233,6 +228,13 @@ def main():
         required=False,
         default=2.0,
         help="Gain value for post-processing (default: 2.0)",
+    )
+    parser.add_argument(
+        "--fcn_gamma",
+        type=float,
+        required=False,
+        default=0.7,
+        help="Gamma value for post-processing (default: 0.7)",
     )
 
     args = parser.parse_args()

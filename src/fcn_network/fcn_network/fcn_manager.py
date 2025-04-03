@@ -62,6 +62,8 @@ class FCNManager(Manager):
     def __init__(self, node: Node, *args, **kwargs):
         super().__init__(node, *args, **kwargs)
 
+        self._last_results_data: np.ndarray = None
+
         # >>> Initialize the FCN Model >>>
         self._model = FCNModel()
         self._device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -78,13 +80,12 @@ class FCNManager(Manager):
         if not os.path.isfile(model_path):
             model_path = os.path.join(resource_path, model_path)
 
-        print(model_path)
-
         # <<< Load Files <<<
 
         # >>> FCN Parameters >>>
         self._do_transform = kwargs["fcn_image_transform"]
         self._gain = kwargs["fcn_gain"]
+        self._gamma = kwargs["fcn_gamma"]
         self._transformer = Normalize(
             mean=[0.6501676617516412, 0.6430160918638441, 0.6165616299396091],
             std=[0.16873769158467197, 0.17505241356408263, 0.1989546266815883],
@@ -150,6 +151,8 @@ class FCNManager(Manager):
         )  # 지수 함수로 가중치 적용
 
         data = np.sum(normalized_results, axis=0)
+        if self._last_results_data is not None:
+            data = data * self._gamma + (1 - self._gamma) * self._last_results_data
 
         num_peaks = len(weights)
 
@@ -157,7 +160,11 @@ class FCNManager(Manager):
         top_peak_idx, top_peak_datas = self.find_top_peaks(
             data, num_peaks=num_peaks, smooth_sigma=10, min_distance=10
         )
-        # if len(top_peak_idx) == 4:
+        if len(top_peak_idx) != 4:
+            raise ValueError(
+                f"Number of peaks found: {len(top_peak_idx)}. Expected: {num_peaks}."
+            )
+
         top_peak_datas = top_peak_datas * weights
 
         # Sort the top_peak_idx and top_peak_datas in ascending order of top_peak_idx
@@ -252,19 +259,20 @@ class GridManager(Manager):
         ):
             self._row_id = row_id
             self._col_id = col_id
-            self._center_coord = center_coord
+
             self._size = size
+            self._center_coord = center_coord
+
             self._threshold = threshold
 
             self._points = 0
-            self._is_occupied = False
 
         @property
-        def row_id(self):
+        def row(self):
             return self._row_id
 
         @property
-        def col_id(self):
+        def col(self):
             return self._col_id
 
         @property
@@ -273,17 +281,6 @@ class GridManager(Manager):
 
         @property
         def is_occupied(self):
-            return self._is_occupied
-
-        def set_state(self, state: bool = None):
-            if state is not None:
-                self._is_occupied = state
-                return self._is_occupied
-
-            self._is_occupied = self._points > self._threshold
-            return self._is_occupied
-
-        def get_state(self):
             return self._points > self._threshold
 
         def slice(self, points: np.array):
@@ -384,6 +381,53 @@ class GridManager(Manager):
 
             return points_in_grid
 
+    class Line(object):
+        def __init__(self, id: str):
+            self._id = id
+            self._grids = []
+
+        def append(self, grid, by: str):
+            grid: GridManager.Grid
+            if not isinstance(grid, GridManager.Grid):
+                raise TypeError("grid must be an instance of GridManager.Grid")
+
+            self._grids.append(grid)
+
+            self._grids = self.sort(by=by)
+
+            return self._grids
+
+        def set(self, grids, by: str):
+            grids: List[GridManager.Grid]
+
+            if not all(isinstance(grid, GridManager.Grid) for grid in grids):
+                raise TypeError("grids must be a list of GridManager.Grid instances")
+
+            self._grids = grids
+
+            self._grids = self.sort(by=by)
+
+            return self._grids
+
+        def sort(self, by: str):
+            """
+            :param by: "row" or "col"
+            """
+
+            if by not in ["row", "col"]:
+                raise ValueError("Sort parameter 'by' must be either 'row' or 'col'")
+
+            self._grids.sort(key=lambda grid: getattr(grid, by))
+            return self._grids
+
+        @property
+        def id(self):
+            return self._id
+
+        @property
+        def grids(self):
+            return self._grids
+
     def __init__(self, node: Node, *args, **kwargs):
         super().__init__(node, *args, **kwargs)
 
@@ -402,7 +446,10 @@ class GridManager(Manager):
             self._grid_data = json.load(f)
         # <<< Load Files
 
-    def create_grid(self):
+        # >>> Initialize the Grid Manager >>>
+        self._grids, self._rows, self._cols = self.create_grid()
+
+    def create_grid(self) -> Tuple[List[Grid], List[Line], List[Line]]:
         rows = self._grid_data["rows"]
         cols = self._grid_data["columns"]
 
@@ -421,11 +468,11 @@ class GridManager(Manager):
         point_threshold = grid_identifier["point_threshold"]
 
         grids = []
-        grids_dict = {}
+        cols = [GridManager.Line(id=str(col)) for col in cols]  # e.g. '0'
+        rows = [GridManager.Line(id=str(row)) for row in rows]  # e.g. 'A'
 
-        for r, row in enumerate(rows):
-            for c, col in enumerate(cols):
-
+        for r, row_line, row in zip(range(len(rows)), rows, rows):
+            for c, col_line, col in zip(range(len(rows)), cols, cols):
                 center_coord = Point(
                     x=start_center_coord.x + grid_size.x * r,
                     y=start_center_coord.y - grid_size.y * c,
@@ -440,13 +487,91 @@ class GridManager(Manager):
                     threshold=point_threshold,
                 )
 
+                # Append grid to row and column, and grids
+                row_line.append(grid, by="col")
+                col_line.append(grid, by="row")
                 grids.append(grid)
-                grids_dict[f"{row}{col}"] = grid
 
-        return grids, grids_dict
+        return grids, rows, cols
+
+    @property
+    def rows(self):
+        return self._rows
+
+    @property
+    def cols(self):
+        return self._cols
+
+    @property
+    def grids(self):
+        return self._grids
+
+    def get_grid(self, row: str, col: int):
+        """
+        :param row: Row ID (e.g. 'A')
+        :param col: Column ID (e.g. 0)
+        :return: Grid object
+        """
+
+        for grid in self._grids:
+            if grid.row == row and grid.col == col:
+                return grid
+
+        raise ValueError(f"Grid {row}{col} not found")
 
     def get_grid_data(self):
         return self._grid_data
 
     def get_colums_length(self):
         return len(self._grid_data["columns"])
+
+
+class FCN_Integration_Manager(Manager):
+    def __init__(self, node: Node, *args, **kwargs):
+        super().__init__(node, *args, **kwargs)
+
+        # >>> Service Clients
+        self._fcn_client = self._node.create_client(FCNRequest, "/fcn_request")
+        self._fcn_occupied_client = self._node.create_client(
+            FCNOccupiedRequest, "/fcn_occupied_request"
+        )
+        # <<< Service Clients
+
+    def run(
+        self, target_cls: str
+    ) -> Tuple[FCNRequest.Response, FCNOccupiedRequest.Response]:
+        """
+        :param target_cls: Target class to be detected. e.g. 'bottle_1'
+        """
+
+        # >>> STEP 1. FCN Request >>>
+        fcn_request = FCNRequest.Request(targer_cls=target_cls)
+        fcn_response: FCNRequest.Response = self._fcn_client.call(fcn_request)
+
+        if fcn_response is None:
+            self._node.get_logger().warn("FCN response is None.")
+            return None, None
+
+        if fcn_response.target_col == -1:
+            self._node.get_logger().warn("FCN response target_col is -1.")
+            return fcn_response, None
+
+        # >>> STEP 2. FCN Occupied Request >>>
+        fcn_occupied_request = FCNOccupiedRequest.Request(
+            empty_cols=fcn_response.empty_cols.tolist(),
+            target_col=fcn_response.target_col,
+        )
+
+        fcn_occupied_response: FCNOccupiedRequest.Response = (
+            self._fcn_occupied_client.call(fcn_occupied_request)
+        )
+
+        if fcn_occupied_response is None:
+            self._node.get_logger().warn("FCN occupied response is None.")
+            return fcn_response, None
+
+        if fcn_occupied_response.moving_row == "Z":
+            self._node.get_logger().warn("FCN occupied response moving_row is Z.")
+            return fcn_response, None
+
+        return fcn_response, fcn_occupied_response
