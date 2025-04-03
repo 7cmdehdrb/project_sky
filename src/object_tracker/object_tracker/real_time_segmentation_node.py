@@ -149,6 +149,7 @@ class RealTimeSegmentationNode(Node):
         result: Results = self._yolo_manager.predict(pil_image)[0]
         boxes: Boxes = result.boxes
         classes: dict = result.names
+        masks: Masks = result.masks
 
         np_boxes = boxes.xyxy.cpu().numpy()
         np_confs = boxes.conf.cpu().numpy()
@@ -190,8 +191,13 @@ class RealTimeSegmentationNode(Node):
                 BoundingBox(
                     id=int(np_cls[idx]),
                     cls=str(cls),
-                    conf=float(conf), # if difference_ratio > 1.2 else 0.0,
+                    conf=float(conf),  # if difference_ratio > 1.2 else 0.0,
                     bbox=[x1, y1, x2, y2],
+                    mask_row=masks.xy[idx].shape[0],
+                    mask_col=masks.xy[idx].shape[1],
+                    mask_data=np.array(masks.xy[idx], dtype=np.int32)
+                    .flatten()
+                    .tolist(),
                 )
             )
 
@@ -221,6 +227,15 @@ class RealTimeSegmentationNode(Node):
                 ),
                 thickness=2,
             )
+
+            # mask에 해당하는 픽셀 색 변경
+            if masks is not None and masks.data[idx] is not None:
+                mask = masks.data[idx].cpu().numpy()
+                color = self._object_manager.color_dict[int(np_cls[idx])]
+
+                # Apply the mask to the image
+                for c in range(3):  # Assuming RGB image
+                    np_image[:, :, c] = np.where(mask, color[c], np_image[:, :, c])
 
         segmented_image = self._image_manager.encode_message(np_image, encoding="rgb8")
         return segmented_image, bboxes
