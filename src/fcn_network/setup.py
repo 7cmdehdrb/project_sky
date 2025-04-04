@@ -35,7 +35,6 @@ setup(
         "console_scripts": [
             "fcn_server = fcn_network.fcn_server:main",
             "pointcloud_grid_identifier_server = fcn_network.pointcloud_grid_identifier_server:main",
-            "fcn_integration_server = fcn_network.fcn_integration_server:main",
         ],
     },
 )

@@ -63,6 +63,7 @@ class PointCloudGridIdentifier(Node):
 
         # >>> Data >>>
         self._pointcloud_msg: PointCloud2 = None
+        self._is_test = kwargs.get("test_bench", False)
         # <<< Data <<<
 
         self.get_logger().info("Pointcloud Grid Identifier Node has been initialized.")
@@ -128,23 +129,34 @@ class PointCloudGridIdentifier(Node):
         # >>> STEP 3. Get the first occupied row >>>
         side_columns = self.get_side_columns(target_column_id)
 
+        self.get_logger().info(
+            f"Side columns: {[column.id for column in side_columns]}"
+        )
+
         results = []
         for side_column in side_columns:
             side_column: GridManager.Line
 
+            flag = True
             for grid in side_column.grids:
                 grid: GridManager.Grid
 
                 if grid.is_occupied:
+                    flag = False
                     id = grid.row  # the row id of first occupied grid
 
                     if ord(id) > ord(first_occupied_grid.row):
                         results.append(grid.col)
                     break
 
+            if flag:
+                results.append(side_column.grids[-1].col)
+
         response.action = len(results) != 0  # True : Sweaping, False : Grasping
         response.moving_row = first_occupied_grid.row
         response.moving_cols = results
+
+        self.get_logger().info(f"Occupied grid: {response}")
 
         action = "Sweaping" if response.action else "Grasping"
 
@@ -167,10 +179,13 @@ class PointCloudGridIdentifier(Node):
         points = PointCloudTransformer.pointcloud2_to_numpy(
             msg=self._pointcloud_msg, rgb=False
         )
-        transform_matrix = QuaternionAngle.transform_realsense_to_ros(np.eye(4))
-        transformed_points = PointCloudTransformer.transform_pointcloud(
-            points, transform_matrix
-        )
+        if not self._is_test:
+            transform_matrix = QuaternionAngle.transform_realsense_to_ros(np.eye(4))
+            transformed_points = PointCloudTransformer.transform_pointcloud(
+                points, transform_matrix
+            )
+        else:
+            transformed_points = points
 
         marker_array = MarkerArray()
         for grid in self._grid_manager.grids:
@@ -196,6 +211,14 @@ def main():
     argv = remove_ros_args(sys.argv)
 
     parser = argparse.ArgumentParser(description="FCN Server Node")
+
+    parser.add_argument(
+        "--test_bench",
+        type=bool,
+        default=False,
+        help="Path or file name of the grid manager. If input is a file name, the file should be located in the 'resource' directory.",
+    )
+
     parser.add_argument(
         "--grid_data_file",
         type=str,

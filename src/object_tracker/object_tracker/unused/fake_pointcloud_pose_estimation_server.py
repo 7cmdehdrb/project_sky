@@ -53,16 +53,12 @@ class ObjectPoseEstimator(Node):
     def __init__(self, *args, **kwargs):
         super().__init__("object_pose_estimator")
 
-        self._is_test = kwargs.get("test_bench", False)
-        if self._is_test:
-            self.get_logger().info("Test Bench Mode is ON")
-
-        self.pcd_subscirber = self.create_subscription(
-            PointCloud2,
-            "/camera/camera1/depth/color/points",
-            callback=self.pointcloud_callback,
-            qos_profile=qos_profile_system_default,
-        )
+        # self.pcd_subscirber = self.create_subscription(
+        #     PointCloud2,
+        #     "/camera/camera1/depth/color/points",
+        #     callback=self.pointcloud_callback,
+        #     qos_profile=qos_profile_system_default,
+        # )
 
         self._object_manager = ObjectManager(node=self, *args, **kwargs)
         self._grid_manager = GridManager(node=self, *args, **kwargs)
@@ -74,70 +70,43 @@ class ObjectPoseEstimator(Node):
             self.megapose_request_callback,
             qos_profile=qos_profile_system_default,
         )
-        self._pointcloud_msg: PointCloud2 = None
+        self._target_ids = ["A0", "A1", "A2", "A3", "B1", "B3", "C0", "C1", "C2", "C3"]
         # <<< ROS2 <<<
 
         # NO MAIN LOOP. This node is only runnning for megapose_request callbacks.
 
-    def pointcloud_callback(self, msg: PointCloud2):
-        self._pointcloud_msg = msg
+    def get_fake_objects(self, ids: List[str]):
+        """
+        Get fake objects for testing.
+        """
+        data = BoundingBox3DMultiArray()
+
+        for id in ids:
+            for grid in self._grid_manager._grids:
+                grid: GridManager.Grid
+
+                if id == f"{grid.row}{grid.col}":
+                    data.data.append(
+                        BoundingBox3D(
+                            id=(ord(grid.row) - ord("A") + 1) * 10 + grid.col,
+                            pose=Pose(
+                                position=grid.center_coord,
+                                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                            ),
+                            scale=Vector3(x=0.05, y=0.05, z=0.1),
+                        )
+                    )
+                    break
+
+        return data
 
     def megapose_request_callback(
         self, request: MegaposeRequest.Request, response: MegaposeRequest.Response
     ):
         # Initialize response message
-        response_msg = BoundingBox3DMultiArray()
+        bbox_3d = self.get_fake_objects(self._target_ids)
 
-        # Slice PointCloud
-        points = PointCloudTransformer.pointcloud2_to_numpy(
-            msg=self._pointcloud_msg, rgb=False
-        )
-
-        if not self._is_test:
-            transform_matrix = QuaternionAngle.transform_realsense_to_ros(np.eye(4))
-            transformed_points = PointCloudTransformer.transform_pointcloud(
-                points, transform_matrix
-            )
-        else:
-            transformed_points = points
-
-        for grid in self._grid_manager.grids:
-            grid: GridManager.Grid
-
-            points_in_grid: np.ndarray = grid.slice_and_get_points(transformed_points)
-
-            if points_in_grid.shape[0] < 10:
-                continue
-
-            center_point = np.mean(points_in_grid, axis=0)
-            x_min, y_min, z_min = np.min(points_in_grid, axis=0)
-            x_max, y_max, z_max = np.max(points_in_grid, axis=0)
-            x_scale = np.clip(np.abs(x_max - x_min), 0.0, 0.05)
-            y_scale = np.clip(np.abs(y_max - y_min), 0.0, 0.05)
-            z_scale = np.clip(np.abs(z_max - z_min), 0.0, 0.1)
-
-            bbox = BoundingBox3D(
-                id=((ord(grid.row) - 64) * 10) + grid.col,
-                cls=f"{grid.row}{grid.col}",
-                pose=Pose(
-                    position=Point(
-                        x=float(center_point[0]),
-                        y=float(center_point[1]),
-                        z=float(center_point[2]),
-                    ),
-                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
-                scale=Vector3(
-                    x=float(y_scale) * 0.7, y=float(y_scale) * 0.7, z=float(z_scale)
-                ),
-            )
-
-            self.get_logger().info(
-                f"\nObject Detedted!\nGrid {grid.row}{grid.col}: {bbox.pose.position}"
-            )
-            response_msg.data.append(bbox)
-
-        response.response = response_msg
+        response.response = bbox_3d
 
         return response
 
@@ -151,13 +120,6 @@ def main():
     argv = remove_ros_args(sys.argv)
 
     parser = argparse.ArgumentParser(description="FCN Server Node")
-
-    parser.add_argument(
-        "--test_bench",
-        type=bool,
-        default=False,
-        help="Test Bench Mode. If True, the node will run in test bench mode.",
-    )
 
     parser.add_argument(
         "--obj_bounds_file",

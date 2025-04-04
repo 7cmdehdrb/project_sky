@@ -14,6 +14,10 @@ def generate_launch_description():
         "obj_bounds_file", description="Path to the object bounds file"
     )
 
+    is_test_arg = DeclareLaunchArgument(
+        "test_bench", default_value="false", description="Test Bench Mode"
+    )
+
     pose_estimation_node = Node(
         package="object_tracker",
         executable="pointcloud_pose_estimation_server",
@@ -24,9 +28,11 @@ def generate_launch_description():
             LaunchConfiguration("grid_data_file"),
             "--obj_bounds_file",
             LaunchConfiguration("obj_bounds_file"),
+            "--test_bench",
+            LaunchConfiguration("test_bench"),
         ],
     )
 
     return LaunchDescription(
-        [grid_data_file_arg, obj_bounds_file_arg, pose_estimation_node]
+        [grid_data_file_arg, obj_bounds_file_arg, is_test_arg, pose_estimation_node]
     )

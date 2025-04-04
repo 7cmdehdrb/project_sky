@@ -79,13 +79,13 @@ class MainControlNode(object):
     def __init__(self, node: Node, *args, **kwargs):
         self._node = node
 
+        self._is_test = kwargs.get("test_bench", False)
+
         # >>> Managers >>>
         self._transform_manager = TransformManager(node=self._node, *args, **kwargs)
         self._joint_states_manager = JointStatesManager(
             node=self._node, *args, **kwargs
         )
-
-        # self._grid_manager = GridManager(node=self._node, *args, **kwargs)
 
         self._object_pose_estimation_manager = ObjectPoseEstimationManager(
             node=self._node, *args, **kwargs
@@ -232,7 +232,7 @@ class MainControlNode(object):
                 -2.306225299835205,
                 -3.866194864312643,
                 6.038235187530518,
-                1.6495410203933716,
+                np.pi * 1.5,
                 -0.2675898710833948,
             ],
         )
@@ -243,7 +243,6 @@ class MainControlNode(object):
         # <<< Unique Joint States <<<
 
         # >>> TEST >>>
-        self._is_test = kwargs.get("test_bench", False)
         self._planning_attempt = 0
         self._moving_col: int = -1
         self._target_pose_pub = self._node.create_publisher(
@@ -341,6 +340,7 @@ class MainControlNode(object):
         Run megapose client to get all the objects' pose
         Return the object pose estimation in camera frame
         """
+
         try:
             # >>> STEP 1. Get the current planning scene and reset it >>>
             current_scene = self._get_planning_scene_service_manager.run()
@@ -437,6 +437,7 @@ class MainControlNode(object):
                 self._node.get_logger().info(
                     f"FCN Searching Success: {target_id} / {self._control_action.target_object.cls}"
                 )
+
                 self.action_selecting(header=header)
                 return True
 
@@ -678,7 +679,7 @@ class MainControlNode(object):
         try:
             target_pose: Pose = self._control_action.target_object.pose
 
-            target_row = int(self._control_action.target_id[1])  # e.g. 'A1' -> 1
+            target_col = int(self._control_action.target_id[1])  # e.g. 'A1' -> 1
 
             if self._planning_attempt // 2 == 0:
                 moving_col = max(
@@ -687,14 +688,12 @@ class MainControlNode(object):
             else:
                 moving_col = min([int(id[1]) for id in self._control_action.goal_ids])
 
-            direction = target_row < moving_col  # True for right, False for left
+            direction = target_col < moving_col  # True for right, False for left
 
             offset = -0.07 if direction else 0.07
 
             self._moving_col = moving_col
             self._node.get_logger().info(f"Set moving col: {moving_col}")
-
-            self._node.get_logger().info(f"Moving Row: {self._moving_col}")
 
             target_pose = Pose(
                 position=Point(
