@@ -141,11 +141,6 @@ class FCNServerNode(Node):
 
             # TODO: Add the weights
             weights = [1.0] * self._grid_manager.get_colums_length()
-<<<<<<< HEAD
-            if self._moving_row is not None:
-                weights[self._moving_row] = 0.0
-                self.get_logger().info(f"Weights: {weights}")
-=======
             if last_col >= 0:
                 weights[last_col] = 0.0
 
@@ -153,7 +148,6 @@ class FCNServerNode(Node):
 
             else:
                 self.get_logger().info(f"No last column, weight: {weights}")
->>>>>>> 5e16e6c (i love)
 
             target_col, empty_cols, _ = self._fcn_manager.post_process_results(
                 target_output, weights

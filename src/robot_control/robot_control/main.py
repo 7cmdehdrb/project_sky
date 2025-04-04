@@ -245,14 +245,7 @@ class MainControlNode(object):
         # >>> TEST >>>
         self._is_test = kwargs.get("test_bench", False)
         self._planning_attempt = 0
-<<<<<<< HEAD
-        self._moving_row: int = None
-        self._moving_row_pub = self._node.create_publisher(
-            UInt16, "/moving_row", qos_profile_system_default
-        )
-=======
         self._moving_col: int = -1
->>>>>>> 5e16e6c (i love)
         self._target_pose_pub = self._node.create_publisher(
             PoseStamped,
             "/target_pose",
@@ -271,13 +264,6 @@ class MainControlNode(object):
             )
         )
 
-<<<<<<< HEAD
-        if self._moving_row is not None:
-            if self._state.value < 10:
-                self._moving_row_pub.publish(UInt16(data=int(self._moving_row)))
-
-=======
->>>>>>> 5e16e6c (i love)
     # <<< Main Control Method <<<
 
     # >>> Operation Methods >>>
@@ -708,7 +694,7 @@ class MainControlNode(object):
             self._moving_col = moving_col
             self._node.get_logger().info(f"Set moving col: {moving_col}")
 
-            self._node.get_logger().info(f"Moving Row: {self._moving_row}")
+            self._node.get_logger().info(f"Moving Row: {self._moving_col}")
 
             target_pose = Pose(
                 position=Point(
