@@ -114,6 +114,19 @@ class ClosestObjectClassifierNode(Node):
             image[mask_image > 0] = class_id
         return image
 
+    def remove_outliers_iqr(self, depth_image: np.ndarray):
+        if depth_image.ndim != 1:
+            raise ValueError("1차원 ndarray만 지원됩니다.")
+
+        q1 = np.percentile(depth_image, 25)
+        q3 = np.percentile(depth_image, 75)
+        iqr = q3 - q1
+
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+
+        return depth_image[(depth_image >= lower_bound) & (depth_image <= upper_bound)]
+
     def get_closest_object(self):
         if self._depth_raw is None:
             return None
@@ -198,21 +211,6 @@ class ClosestObjectClassifierNode(Node):
             if len(value) > 0:
                 temp.append(value)
         grouped_objects = temp
-
-        # grouped_objects = [[]]
-        # for class_id, center_point in center.items():
-        #     if class_id not in distance:
-        #         continue
-        #     if grouped_objects[0] == []:
-        #         grouped_objects[0].append(class_id)
-        #         continue
-        #     for group in grouped_objects:
-        #         for obj in group:
-        #             if abs(center_point[0] - center[obj][0]) < self._threshold:
-        #                 group.append(class_id)
-        #                 break
-        #         else:
-        #             grouped_objects.append([class_id])
 
         print("Grouped Objects:", grouped_objects)
 
