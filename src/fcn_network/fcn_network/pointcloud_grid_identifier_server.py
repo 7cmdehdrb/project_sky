@@ -190,6 +190,11 @@ class PointCloudGridIdentifier(Node):
 def main():
     rclpy.init(args=None)
 
+    from rclpy.utilities import remove_ros_args
+
+    # Remove ROS2 arguments
+    argv = remove_ros_args(sys.argv)
+
     parser = argparse.ArgumentParser(description="FCN Server Node")
     parser.add_argument(
         "--grid_data_file",
@@ -199,7 +204,7 @@ def main():
         help="Path or file name of the grid data. If input is a file name, the file should be located in the 'resource' directory. Required",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv[1:])
     kagrs = vars(args)
 
     node = PointCloudGridIdentifier(**kagrs)

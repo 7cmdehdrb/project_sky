@@ -137,17 +137,29 @@ class ObjectPoseEstimator(Node):
 def main():
     rclpy.init(args=None)
 
+    from rclpy.utilities import remove_ros_args
+
+    # Remove ROS2 arguments
+    argv = remove_ros_args(sys.argv)
+
     parser = argparse.ArgumentParser(description="FCN Server Node")
+
+    parser.add_argument(
+        "--obj_bounds_file",
+        type=str,
+        default=True,
+        help="Path or file name of object bounds. If input is a file name, the file should be located in the 'resource' directory. Required",
+    )
 
     parser.add_argument(
         "--grid_data_file",
         type=str,
-        required=False,
+        required=True,
         default="grid_data.json",
         help="Path or file name of object bounds. If input is a file name, the file should be located in the 'resource' directory. Required",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv[1:])
     kagrs = vars(args)
 
     node = ObjectPoseEstimator(**kagrs)

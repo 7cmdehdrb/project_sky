@@ -85,7 +85,7 @@ class MainControlNode(object):
             node=self._node, *args, **kwargs
         )
 
-        self._grid_manager = GridManager(node=self._node, *args, **kwargs)
+        # self._grid_manager = GridManager(node=self._node, *args, **kwargs)
 
         self._object_pose_estimation_manager = ObjectPoseEstimationManager(
             node=self._node, *args, **kwargs
@@ -243,11 +243,16 @@ class MainControlNode(object):
         # <<< Unique Joint States <<<
 
         # >>> TEST >>>
+        self._is_test = kwargs.get("test_bench", False)
         self._planning_attempt = 0
+<<<<<<< HEAD
         self._moving_row: int = None
         self._moving_row_pub = self._node.create_publisher(
             UInt16, "/moving_row", qos_profile_system_default
         )
+=======
+        self._moving_col: int = -1
+>>>>>>> 5e16e6c (i love)
         self._target_pose_pub = self._node.create_publisher(
             PoseStamped,
             "/target_pose",
@@ -266,10 +271,13 @@ class MainControlNode(object):
             )
         )
 
+<<<<<<< HEAD
         if self._moving_row is not None:
             if self._state.value < 10:
                 self._moving_row_pub.publish(UInt16(data=int(self._moving_row)))
 
+=======
+>>>>>>> 5e16e6c (i love)
     # <<< Main Control Method <<<
 
     # >>> Operation Methods >>>
@@ -401,7 +409,7 @@ class MainControlNode(object):
         """
         try:
             fcn_response, fcn_occupied_response = self._fcn_integration_manager.run(
-                target_cls=self._target_cls,
+                target_cls=self._target_cls, last_target_col=self._moving_col
             )
 
             if fcn_response is None or fcn_occupied_response is None:
@@ -687,17 +695,18 @@ class MainControlNode(object):
             target_row = int(self._control_action.target_id[1])  # e.g. 'A1' -> 1
 
             if self._planning_attempt // 2 == 0:
-                moving_row = max(
+                moving_col = max(
                     [int(id[1]) for id in self._control_action.goal_ids]
                 )  # e.g. ['A0', 'A2'] -> [0, 2]
             else:
-                moving_row = min([int(id[1]) for id in self._control_action.goal_ids])
+                moving_col = min([int(id[1]) for id in self._control_action.goal_ids])
 
-            direction = target_row < moving_row  # True for right, False for left
+            direction = target_row < moving_col  # True for right, False for left
 
             offset = -0.07 if direction else 0.07
 
-            self._moving_row = moving_row
+            self._moving_col = moving_col
+            self._node.get_logger().info(f"Set moving col: {moving_col}")
 
             self._node.get_logger().info(f"Moving Row: {self._moving_row}")
 
@@ -821,7 +830,7 @@ class MainControlNode(object):
                     direction = (
                         target_row < moving_rows
                     )  # True for right, False for left
-                    sweep_distance = self._grid_manager.get_grid_data()[
+                    sweep_distance = self._object_selection_manager.get_grid_data()[
                         "grid_identifier"
                     ]["grid_size"]["y"]
 
@@ -863,6 +872,10 @@ class MainControlNode(object):
         """
         Run gripper action to grasp the target object
         """
+        if self._is_test:
+            self.action_selecting(header=header)
+            return True
+
         self._gripper_action_manager.control_gripper(open=False)
         if self._gripper_action_manager.is_finished is True:
             self.action_selecting(header=header)
@@ -874,6 +887,10 @@ class MainControlNode(object):
         """
         Run gripper action to ungrasp the target object
         """
+        if self._is_test:
+            self.action_selecting(header=header)
+            return True
+
         try:
             self._gripper_action_manager.control_gripper(open=True)
             if self._gripper_action_manager.is_finished is True:
@@ -957,7 +974,6 @@ class MainControlNode(object):
             )
 
         try:
-            # >>>> STEP 1. Set path constraint. Limit the end-effector's orientation >>>
             path_constraint = Constraints(
                 name="path_constraint",
                 orientation_constraints=[
@@ -1040,6 +1056,13 @@ def main():
         type=str,
         required=True,
         help="Target class to search. Required",
+    )
+    parser.add_argument(
+        "--test_bench",
+        type=bool,
+        required=False,
+        default=False,
+        help="Test bench mode. Default is False",
     )
 
     args = parser.parse_args()

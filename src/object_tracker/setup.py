@@ -38,6 +38,7 @@ setup(
         "console_scripts": [
             "real_time_segmentation_node = object_tracker.real_time_segmentation_node:main",
             "object_pose_estimation_server = object_tracker.object_pose_estimation_server:main",
+            "pointcloud_pose_estimation_server = object_tracker.pointcloud_pose_estimation_server:main",
             "closest_object_classifier = object_tracker.closest_object_classifier:main",
         ],
     },

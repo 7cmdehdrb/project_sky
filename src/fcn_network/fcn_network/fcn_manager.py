@@ -573,7 +573,7 @@ class FCN_Integration_Manager(Manager):
         # <<< Service Clients
 
     def run(
-        self, target_cls: str
+        self, target_cls: str, last_target_col: int = -1
     ) -> Tuple[FCNRequest.Response, FCNOccupiedRequest.Response]:
         """
         :param target_cls: Target class to be detected. e.g. 'bottle_1'
@@ -582,6 +582,7 @@ class FCN_Integration_Manager(Manager):
         # >>> STEP 1. FCN Request >>>
         fcn_request = FCNRequest.Request()
         fcn_request.target_cls = target_cls
+        fcn_request.last_target_col = last_target_col
         fcn_response: FCNRequest.Response = self._fcn_client.call(fcn_request)
 
         if fcn_response is None:

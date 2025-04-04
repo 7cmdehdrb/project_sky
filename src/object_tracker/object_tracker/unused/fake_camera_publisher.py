@@ -39,7 +39,7 @@ class FakeCameraPublisher(Node):
 
         self.bridge = CvBridge()
         self.image = cv2.imread(
-            "/home/min/7cmdehdrb/ros2_ws/src/object_tracker/resource/image/image_0002.png",
+            "/home/min/7cmdehdrb/ros2_ws/image_0017.png",
             cv2.IMREAD_COLOR,
         )
 

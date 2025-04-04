@@ -78,14 +78,9 @@ class FCNServerNode(Node):
             "/fcn_test",
             qos_profile=qos_profile_system_default,
         )
-        self.moving_col_sub = self.create_subscription(
-            UInt16, "/moving_row", self.moving_row_callback, qos_profile_system_default
-        )
-
         # <<< ROS2 <<<
 
         # >>> Data >>>
-        self._moving_row: int = None
         self._fcn_image: Image = None
         self._target_output = None
         self._post_processed_data = None
@@ -142,11 +137,23 @@ class FCNServerNode(Node):
             # Publish the processed image
             self.publish_output_image(image_output=target_output)
 
+            last_col: int = request.last_target_col
+
             # TODO: Add the weights
             weights = [1.0] * self._grid_manager.get_colums_length()
+<<<<<<< HEAD
             if self._moving_row is not None:
                 weights[self._moving_row] = 0.0
                 self.get_logger().info(f"Weights: {weights}")
+=======
+            if last_col >= 0:
+                weights[last_col] = 0.0
+
+                self.get_logger().info(f"Last column: {last_col}, weight: {weights}")
+
+            else:
+                self.get_logger().info(f"No last column, weight: {weights}")
+>>>>>>> 5e16e6c (i love)
 
             target_col, empty_cols, _ = self._fcn_manager.post_process_results(
                 target_output, weights
@@ -215,6 +222,11 @@ class FCNServerNode(Node):
 def main():
     rclpy.init(args=None)
 
+    from rclpy.utilities import remove_ros_args
+
+    # Remove ROS2 arguments
+    argv = remove_ros_args(sys.argv)
+
     parser = argparse.ArgumentParser(description="FCN Server Node")
     parser.add_argument(
         "--model_file",
@@ -250,7 +262,7 @@ def main():
         help="Gamma value for post-processing (default: 0.7)",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv[1:])
     kagrs = vars(args)
 
     node = FCNServerNode(**kagrs)
