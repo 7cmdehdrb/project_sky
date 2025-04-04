@@ -42,10 +42,12 @@ from base_package.manager import ImageManager, Manager, ObjectManager
 
 class ClosestObjectClassifierNode(Node):
     def __init__(self, *args, **kwargs):
-        super().__init__("closest_object_classifier_node", *args, **kwargs)
+        super().__init__("closest_object_classifier_node")
         self._image_raw = None
         self._depth_raw = None
         self._masks = dict()
+
+        self._threshold = kwargs["threshold"]
 
         self._image_manager = ImageManager(
             self,
@@ -121,8 +123,9 @@ class ClosestObjectClassifierNode(Node):
             return None
 
         distance = dict()
+        center = dict()
 
-        # Calculate the average distance for each object
+        # Calculate the average distance and center point for each object
         for class_id, mask in self._masks.items():
             mask_image = self.mask_to_image(mask)
             if mask_image is None:
@@ -133,39 +136,42 @@ class ClosestObjectClassifierNode(Node):
                 )
                 continue
             mask_depth = depth_image[mask_image > 0]
+            center_x = np.mean(mask[:, 0])
+            center_y = np.mean(mask[:, 1])
             distance[class_id] = np.mean(mask_depth)
+            center[class_id] = (center_x, center_y)
 
-        # Create a list of objects in each column
-        mask_image = self.masks_image(self._masks)
-        if mask_image.shape != (480, 640):  # Ensure masks image shape matches
-            print(f"Masks image shape mismatch: {mask_image.shape}")
-            return None
-
-        column_objects_info = []
-        for i in range(640):
-            objects = []
-            for j in range(480):
-                if (
-                    not mask_image[j][i] in objects
-                ):  # Adjusted indexing to height x width
-                    objects.append(mask_image[j][i])
-            column_objects_info.append(objects)
-
-        # Find the closest object
-        entire_objects = list(self._masks.keys())
-        closest_object = None
-        for column in column_objects_info:
-            dist_column = [distance[i] for i in column if i in distance]
-            if not dist_column:
+        # Grouping objects which are in the same column based on their center points x coordinate
+        # If the difference between the x coordinates of two objects is less than threshold, they are considered in the same column
+        grouped_objects = [[]]
+        for class_id, center_point in center.items():
+            if class_id not in distance:
                 continue
-            min_distance = min(dist_column)
-            min_index = dist_column.index(min_distance)
-            occluded_object = column.pop(min_index)
-            if occluded_object in entire_objects:
-                entire_objects.remove(occluded_object)
-        closest_object = entire_objects
+            if grouped_objects[0] == []:
+                grouped_objects[0].append(class_id)
+                continue
+            for group in grouped_objects:
+                for obj in group:
+                    if abs(center_point[0] - center[obj][0]) < self._threshold:
+                        group.append(class_id)
+                        break
+            else:
+                grouped_objects.append([class_id])
 
-        print("Closest Object:", closest_object)
+        try:
+            # Find the closest object in each group
+            closest_object = []
+            for group in grouped_objects:
+                min_distance = min(
+                    [distance[obj] for obj in group if obj in distance]
+                )  # Find the minimum distance in the group
+                min_class_id = [obj for obj in group if distance[obj] == min_distance]
+                closest_object.append(min_class_id)
+                print("Closest Object:", closest_object)
+
+        except Exception as e:
+            print(f"Error finding closest object: {e}")
+            return None
 
         return closest_object
 
@@ -174,6 +180,13 @@ def main(args=None):
     rclpy.init(args=args)
 
     parser = argparse.ArgumentParser(description="Closest Object Classifier Node")
+    parser.add_argument(
+        "--threshold",
+        type=int,
+        required=False,
+        default=50,
+        help="Threshold for object classification",
+    )
 
     args = parser.parse_args()
     kagrs = vars(args)
