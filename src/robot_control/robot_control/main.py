@@ -245,7 +245,7 @@ class MainControlNode(object):
         # >>> TEST >>>
         self._planning_attempt = 0
         self._moving_row: int = None
-        self._moving_col_pub = self._node.create_publisher(
+        self._moving_row_pub = self._node.create_publisher(
             UInt16, "/moving_row", qos_profile_system_default
         )
         self._target_pose_pub = self._node.create_publisher(
@@ -266,8 +266,9 @@ class MainControlNode(object):
             )
         )
 
-        if self._control_action is not None and self._moving_row is not None:
-            self._moving_col_pub.publish(UInt16(data=int(self._moving_row)))
+        if self._moving_row is not None:
+            if self._state.value < 10:
+                self._moving_row_pub.publish(UInt16(data=int(self._moving_row)))
 
     # <<< Main Control Method <<<
 
@@ -697,6 +698,8 @@ class MainControlNode(object):
             offset = -0.07 if direction else 0.07
 
             self._moving_row = moving_row
+
+            self._node.get_logger().info(f"Moving Row: {self._moving_row}")
 
             target_pose = Pose(
                 position=Point(

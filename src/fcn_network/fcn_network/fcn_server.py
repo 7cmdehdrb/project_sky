@@ -98,6 +98,7 @@ class FCNServerNode(Node):
 
     def moving_row_callback(self, msg: UInt16):
         self._moving_row = msg.data
+        self.get_logger().info(f"Moving row: {self._moving_row}")
 
     def fcn_image_callback(self, msg: Image):
         self._fcn_image = msg
@@ -144,7 +145,7 @@ class FCNServerNode(Node):
             # TODO: Add the weights
             weights = [1.0] * self._grid_manager.get_colums_length()
             if self._moving_row is not None:
-                weights[self._moving_row] = 0.3
+                weights[self._moving_row] = 0.0
                 self.get_logger().info(f"Weights: {weights}")
 
             target_col, empty_cols, _ = self._fcn_manager.post_process_results(
