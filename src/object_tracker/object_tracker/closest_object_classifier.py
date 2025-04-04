@@ -153,6 +153,7 @@ class ClosestObjectClassifierNode(Node):
                 continue
             mask_depth = depth_image[mask_image]  # (640, 480)
             mask_depth = mask_depth[mask_depth > 0]  # Remove zero values
+            mask_depth = self.remove_outliers_iqr(mask_depth)  # Remove outliers
             center_x = np.mean(mask[:, 0])
             center_y = np.mean(mask[:, 1])
             print(
