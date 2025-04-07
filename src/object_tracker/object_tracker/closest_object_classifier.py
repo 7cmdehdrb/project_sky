@@ -48,7 +48,7 @@ class ClosestObjectClassifierNode(object):
 
         self._boundary = [160, 300, 460]
 
-        self._threshold = kwargs["threshold"]
+        self._threshold = kwargs.get("threshold", 50)
         self._debug = kwargs.get("debug", False)
 
         self._depth_raw = None

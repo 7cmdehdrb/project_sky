@@ -54,6 +54,7 @@ class ObjectPoseEstimator(Node):
         super().__init__("object_pose_estimator")
 
         self._is_test = kwargs.get("test_bench", False)
+        self._is_test = False
         if self._is_test:
             self.get_logger().info("Test Bench Mode is ON")
 
@@ -112,9 +113,9 @@ class ObjectPoseEstimator(Node):
             center_point = np.mean(points_in_grid, axis=0)
             x_min, y_min, z_min = np.min(points_in_grid, axis=0)
             x_max, y_max, z_max = np.max(points_in_grid, axis=0)
-            x_scale = np.clip(np.abs(x_max - x_min), 0.0, 0.05)
-            y_scale = np.clip(np.abs(y_max - y_min), 0.0, 0.05)
-            z_scale = np.clip(np.abs(z_max - z_min), 0.0, 0.1)
+            x_scale = np.clip(np.abs(x_max - x_min), 0.0, 0.07)
+            y_scale = np.clip(np.abs(y_max - y_min), 0.0, 0.07)
+            z_scale = np.clip(np.abs(z_max - z_min), 0.0, 0.07)
 
             bbox = BoundingBox3D(
                 id=((ord(grid.row) - 64) * 10) + grid.col,
@@ -127,9 +128,7 @@ class ObjectPoseEstimator(Node):
                     ),
                     orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
                 ),
-                scale=Vector3(
-                    x=float(y_scale) * 0.7, y=float(y_scale) * 0.7, z=float(z_scale)
-                ),
+                scale=Vector3(x=float(y_scale), y=float(y_scale), z=float(z_scale)),
             )
 
             self.get_logger().info(

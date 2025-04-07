@@ -9,8 +9,8 @@
         },
         "start_center_coord": {
             "x": 0.3,
-            "y": 0.7,
-            "z": -0.3
+            "y": 0.85,
+            "z": -0.47
         },
         "point_threshold": 50
     }

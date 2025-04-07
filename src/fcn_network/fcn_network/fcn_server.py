@@ -149,9 +149,11 @@ class FCNServerNode(Node):
             else:
                 self.get_logger().info(f"No last column, weight: {weights}")
 
-            target_col, empty_cols, _ = self._fcn_manager.post_process_results(
-                target_output, weights
+            target_col, empty_cols, top_peak_data = (
+                self._fcn_manager.post_process_results(target_output, weights)
             )
+
+            self.get_logger().info(f"Result: {top_peak_data}")
 
             # Set the response
             response.target_col = target_col

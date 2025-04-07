@@ -153,6 +153,7 @@ class FCNManager(Manager):
         data = np.sum(normalized_results, axis=0)
         if self._last_results_data is not None:
             data = data * self._gamma + (1 - self._gamma) * self._last_results_data
+            self._last_results_data = data
 
         num_peaks = len(weights)
 
@@ -165,14 +166,16 @@ class FCNManager(Manager):
                 f"Number of peaks found: {len(top_peak_idx)}. Expected: {num_peaks}."
             )
 
-        top_peak_datas = top_peak_datas * weights
-
         # Sort the top_peak_idx and top_peak_datas in ascending order of top_peak_idx
         sorted_indices = np.argsort(top_peak_idx)
+
         top_peak_idx = np.array(top_peak_idx)[sorted_indices]
         top_peak_datas = np.array(top_peak_datas)[sorted_indices]
 
+        top_peak_datas = top_peak_datas * weights
+
         max_peak_idx = int(np.argmax(top_peak_datas))
+
         res = [
             idx
             for idx in range(max_peak_idx - 1, max_peak_idx + 2)
@@ -180,7 +183,7 @@ class FCNManager(Manager):
         ]
 
         # target_col, empty_cols, post_processed_data
-        return max_peak_idx, res, data
+        return max_peak_idx, res, top_peak_datas
 
     def find_top_peaks(self, data, num_peaks=4, smooth_sigma=5, min_distance=10):
         """

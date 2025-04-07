@@ -64,6 +64,7 @@ class PointCloudGridIdentifier(Node):
         # >>> Data >>>
         self._pointcloud_msg: PointCloud2 = None
         self._is_test = kwargs.get("test_bench", False)
+        self._is_test = False
         # <<< Data <<<
 
         self.get_logger().info("Pointcloud Grid Identifier Node has been initialized.")

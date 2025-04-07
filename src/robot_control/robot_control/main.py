@@ -32,7 +32,7 @@ import argparse
 # custom
 from base_package.manager import ObjectManager, TransformManager
 from fcn_network.fcn_manager import FCN_Integration_Manager, GridManager
-from object_tracker.megapose_client import MegaPoseClient
+from object_tracker.closest_object_classifier import ClosestObjectClassifierNode
 from object_tracker.object_pose_estimation_server import ObjectPoseEstimationManager
 from robot_control.control_manager import (
     GripperActionManager,
@@ -60,21 +60,24 @@ class State(Enum):
 
     GRASPING_HOMING1 = 10
     GARSPING_TARGET_AIMING = 11  # Move to the front of the target object
-    GARSPING_TARGET_POSITIONING = 12  # Move to the target object pose
-    GARSPING_GRASPING = 13
-    GARSPING_HOME_AIMING = 14  # Move to the front of the target object
-    GARSPING_HOMING2 = 15
-    GARSPING_DROP_POSITIONING = 16  # Move to the drop pose
-    GRASPING_DROP_TABLE_POSITIONING = 17  # Move to the drop pose
-    GARSPING_UNGRASPING = 18
+    GARSPING_TARGET_AIMING2 = 12
+    GARSPING_TARGET_POSITIONING = 13  # Move to the target object pose
+    GARSPING_GRASPING = 14
+    GARSPING_HOME_AIMING = 15  # Move to the front of the target object
+    GARSPING_HOMING2 = 16
+    GARSPING_DROP_POSITIONING = 17  # Move to the drop pose
+    GRASPING_DROP_TABLE_POSITIONING = 18  # Move to the drop pose
+    GARSPING_UNGRASPING = 19
 
     SWEEPING_HOMING1 = 20  # Move to the home pose
     SWEEPING_TARGET_AIMING = 21  # Move to the front of the target object
-    SWEEPING_TARGET_POSITIONING = 22  # Move to the side of the target object
-    SWEEPING_SWEEPING = 23  # Sweep the target object
-    SWEEPING_ROLLBACK = 29
-    SWEEPING_HOME_AIMING = 24  # Move to the front of the target object
-    SWEEPING_HOMING2 = 25  # Move to the home pose
+    SWEEPING_TARGET_AIMING2 = 22
+    SWEEPING_TARGET_POSITIONING = 23  # Move to the side of the target object
+    SWEEPING_SWEEPING = 24  # Sweep the target object
+    SWEEPING_HOME_AIMING = 25  # Move to the front of the target object
+    SWEEPING_HOMING2 = 26  # Move to the home pose
+
+    FINISHED = 99
 
 
 class MainControlNode(object):
@@ -131,6 +134,12 @@ class MainControlNode(object):
             node=self._node, *args, **kwargs
         )
 
+        self._closest_object_classifier = ClosestObjectClassifierNode(
+            node=self._node,
+            *args,
+            **kwargs,
+        )
+
         # <<< Managers <<<
 
         # >>> Parameters >>>
@@ -148,6 +157,7 @@ class MainControlNode(object):
             # LEVEL 3
             State.GRASPING_HOMING1.value: self.home_positioning,
             State.GARSPING_TARGET_AIMING.value: self.target_aiming,
+            State.GARSPING_TARGET_AIMING2.value: self.target_aiming2,
             State.GARSPING_TARGET_POSITIONING.value: self.target_positioning,
             State.GARSPING_GRASPING.value: self.grasping,
             State.GARSPING_HOME_AIMING.value: self.home_aiming,
@@ -158,11 +168,13 @@ class MainControlNode(object):
             # LEVEL 4
             State.SWEEPING_HOMING1.value: self.home_positioning,
             State.SWEEPING_TARGET_AIMING.value: self.sweep_target_aiming,
+            State.SWEEPING_TARGET_AIMING2.value: self.sweep_target_aiming2,
             State.SWEEPING_TARGET_POSITIONING.value: self.sweep_target_positioning,
             State.SWEEPING_SWEEPING.value: self.sweep,
-            State.SWEEPING_ROLLBACK.value: self.sweep_target_positioning,
             State.SWEEPING_HOME_AIMING.value: self.home_aiming,
             State.SWEEPING_HOMING2.value: self.home_positioning,
+            # FINISHED
+            State.FINISHED.value: self.finished,
         }
         # <<< Parameters <<<
 
@@ -185,8 +197,8 @@ class MainControlNode(object):
                 -0.853251652126648,
                 -2.4234585762023926,
                 -3.0269695721068324,
-                4.695071220397949,
-                3.1019468307495117,
+                -np.pi / 2.0,
+                np.pi,
                 -1.616389576588766,
             ],
         )
@@ -203,8 +215,8 @@ class MainControlNode(object):
                 -0.8533289450337911,
                 -2.2019173476285356,
                 -3.243817707337641,
-                4.6992510001573615,
-                3.107277000002501,
+                -np.pi / 2.0,
+                np.pi,
                 -1.6112989998426164,
             ],
         )
@@ -221,8 +233,8 @@ class MainControlNode(object):
                 -0.853251652126648,
                 -2.4234585762023926,
                 -3.0269695721068324,
-                4.695071220397949,
-                3.1019468307495117,
+                -np.pi / 2.0,
+                np.pi,
                 0.0,
             ],
         )
@@ -236,12 +248,12 @@ class MainControlNode(object):
                 "shoulder_pan_joint",
             ],
             position=[
-                -0.21154792726550298,
-                -1.1941368579864502,
-                -3.0269323788084925,
-                4.695095539093018,
-                3.101895332336426,
-                -0.006377998982564748,
+                -np.pi / 18.0,
+                -np.pi * (7.0 / 18.0),
+                -np.pi,
+                -np.pi / 2.0,
+                np.pi,
+                0.0,
             ],
         )
         self._sweeping_to_right_joints = JointState(
@@ -254,14 +266,15 @@ class MainControlNode(object):
                 "shoulder_pan_joint",
             ],
             position=[
-                -0.20895393312487798,
-                -2.306225299835205,
-                -3.866194864312643,
-                6.038235187530518,
+                -0.853251652126648,
+                -2.4234585762023926,
+                -3.0269695721068324,
+                -np.pi / 2.0,
                 np.pi * 1.5,
-                -0.2675898710833948,
+                -1.616389576588766,
             ],
         )
+
         self._sweeping_to_left_joints = JointState(
             name=[
                 "shoulder_lift_joint",
@@ -272,12 +285,12 @@ class MainControlNode(object):
                 "shoulder_pan_joint",
             ],
             position=[
-                -0.20895393312487798,
-                -2.306225299835205,
-                -3.866194864312643,
-                6.038235187530518,
+                -0.853251652126648,
+                -2.4234585762023926,
+                -3.0269695721068324,
+                -np.pi / 2.0,
                 np.pi * 0.5,
-                -0.2675898710833948,
+                -1.616389576588766,
             ],
         )
 
@@ -289,6 +302,8 @@ class MainControlNode(object):
         # <<< Unique Joint States <<<
 
         # >>> TEST >>>
+        self._target_z = 0.30
+        self._is_finished = False
         self._planning_attempt = 0
         self._moving_col: int = -1
         self._target_pose_pub = self._node.create_publisher(
@@ -300,6 +315,8 @@ class MainControlNode(object):
     # >>> Main Control Method >>>
 
     def run(self):
+        self._drop_grid_manager.publish_grid_marker()
+
         self._node.get_logger().info(f"State: {self._state.name}")
 
         self._operations[self._state.value](
@@ -313,10 +330,16 @@ class MainControlNode(object):
 
     # >>> Operation Methods >>>
 
+    def finished(self, header: Header):
+        return True
+
     # >>> LEVEL 0 >>>
     def action_selecting(self, header: Header):
         # CASE 0. Before action selecting
-        if self._control_action is None:
+        if self._state == State.FINISHED:
+            return True
+
+        elif self._control_action is None:
             if self._state == State.WAITING:
                 self._state = State.MEGAPOSE_SEARCHING
             elif self._state == State.MEGAPOSE_SEARCHING:
@@ -324,7 +347,10 @@ class MainControlNode(object):
                     State.FCN_SEARCHING
                 )  # After FCN_SEARCHING, control action will be defined
             elif self._state == State.FCN_POSITIONING:
-                self._state = State.WAITING
+                if self._is_finished:
+                    self._state = State.FINISHED
+                else:
+                    self._state = State.WAITING
 
         # CASE 1. Grasping
         elif self._control_action.action:
@@ -436,9 +462,12 @@ class MainControlNode(object):
                         scene=current_scene,
                     )
 
+                    new_scene = self._get_planning_scene_service_manager.run()
+
                     if is_applying_success and is_applying_default_success:
                         self._target_objects = bbox_3d
                         self.action_selecting(header=header)
+
                         return True
 
         except ValueError as ve:
@@ -455,6 +484,60 @@ class MainControlNode(object):
         Run FCN Integration Client to get the target object
         """
         try:
+            # >>> STEP 0. Check Target is exist >>>
+            front_objects: dict = self._closest_object_classifier.get_closest_object()
+            for key, values in front_objects.items():
+                if values["class_id"] == -1:
+                    continue
+
+                cls = self._object_manager.reverse_indexs[
+                    values["class_id"]
+                ]  # e.g. bottle_1
+
+                if cls == self._target_cls:
+                    self._node.get_logger().info(
+                        f"Target Object is already detected! {cls}"
+                    )
+
+                    target_object: BoundingBox3D = None
+                    for obj in self._target_objects.data:
+                        obj: BoundingBox3D
+
+                        if int(obj.cls[1]) == key:
+                            target_object = obj
+                            break
+
+                    if target_object is not None:
+
+                        target_id = target_object.cls
+
+                        target_object: BoundingBox3D = (
+                            self._object_selection_manager.get_target_object_with_grid_id(
+                                target_objects=self._target_objects, grid_id=target_id
+                            )
+                        )
+
+                        self._control_action = ControlAction(
+                            target_id=target_id,
+                            goal_ids=[],
+                            action=False,
+                            target_object=target_object,
+                        )
+
+                        self._is_finished = True
+
+                        self._node.get_logger().info("GET FINAL TARGET OBJECT!!")
+
+                        self.action_selecting(header=header)
+
+                        return True
+
+                    else:
+                        self._node.get_logger().warn(
+                            f"Target Object is not exist in the scene! {cls}"
+                        )
+                        return False
+
             fcn_response, fcn_occupied_response = self._fcn_integration_manager.run(
                 target_cls=self._target_cls, last_target_col=self._moving_col
             )
@@ -523,7 +606,7 @@ class MainControlNode(object):
                 target_pose=None,  # To ignore the target pose
                 joint_states=self._waiting_joints,
                 tolerance=0.01,
-                scale_factor=0.5,
+                scale_factor=1.0,
                 use_path_contraint=False,
             )
 
@@ -557,7 +640,7 @@ class MainControlNode(object):
                 target_pose=None,  # target_pose,
                 joint_states=self._home_joints,
                 tolerance=0.01,
-                scale_factor=0.5,
+                scale_factor=1.0,
                 use_path_contraint=False,
             )
 
@@ -587,8 +670,57 @@ class MainControlNode(object):
             target_pose = Pose(
                 position=Point(
                     x=target_pose.position.x,
-                    y=target_pose.position.y - 0.15,
-                    z=target_pose.position.z,
+                    y=self._home_pose.pose.position.y + 0.03,
+                    z=self._target_z,
+                ),
+                orientation=self._home_pose.pose.orientation,
+            )
+
+            # control_success = self.control_caterian_path(
+            #     header=header,
+            #     target_pose=target_pose,
+            #     joint_states=None,
+            #     tolerance=None,
+            #     scale_factor=1.0,
+            #     use_path_contraint=None,
+            # )
+
+            control_success = self.control(
+                header=header,
+                target_pose=target_pose,
+                joint_states=None,
+                tolerance=0.01,
+                scale_factor=1.0,
+                use_path_contraint=False,
+            )
+
+            self._target_pose_pub.publish(PoseStamped(header=header, pose=target_pose))
+
+            if control_success:
+                self.action_selecting(header=header)
+                return control_success
+
+        except ValueError as ve:
+            self._node.get_logger().warn(f"Value Error: {ve}")
+
+        except Exception as e:
+            self._node.get_logger().error(f"Unexpected Error: {e}")
+            self._node.get_logger().error("Target Aiming Failed")
+
+        return False
+
+    def target_aiming2(self, header: Header):
+        """
+        Run kinematic path service to get the target object pose.
+        Target pose is the pose which is located in front of the target object
+        """
+        try:
+            target_pose: Pose = self._control_action.target_object.pose
+            target_pose = Pose(
+                position=Point(
+                    x=target_pose.position.x,
+                    y=target_pose.position.y - 0.1,
+                    z=self._target_z,
                 ),
                 orientation=self._home_pose.pose.orientation,
             )
@@ -597,9 +729,9 @@ class MainControlNode(object):
                 header=header,
                 target_pose=target_pose,
                 joint_states=None,
-                tolerance=0.05,
-                scale_factor=0.5,
-                use_path_contraint=True,
+                tolerance=0.01,
+                scale_factor=1.0,
+                use_path_contraint=False,
             )
 
             self._target_pose_pub.publish(PoseStamped(header=header, pose=target_pose))
@@ -628,7 +760,7 @@ class MainControlNode(object):
                 position=Point(
                     x=target_pose.position.x,
                     y=target_pose.position.y,
-                    z=target_pose.position.z - 0.02,
+                    z=self._target_z,
                 ),
                 orientation=self._home_pose.pose.orientation,
             )
@@ -637,7 +769,7 @@ class MainControlNode(object):
                 header=header,
                 target_pose=target_pose,
                 joint_states=None,
-                tolerance=0.02,
+                tolerance=0.01,
                 scale_factor=0.2,
                 use_path_contraint=False,
             )
@@ -680,7 +812,7 @@ class MainControlNode(object):
                 target_pose=target_pose,
                 joint_states=None,
                 tolerance=0.01,
-                scale_factor=0.5,
+                scale_factor=1.0,
                 use_path_contraint=False,
             )
 
@@ -713,7 +845,7 @@ class MainControlNode(object):
                 target_pose=None,  # To ignore the target pose
                 joint_states=self._dropping_joints,
                 tolerance=0.01,
-                scale_factor=0.5,
+                scale_factor=1.0,
                 use_path_contraint=False,
             )
 
@@ -761,7 +893,7 @@ class MainControlNode(object):
                 target_pose=final_target_pose,
                 joint_states=None,
                 tolerance=0.01,
-                scale_factor=0.5,
+                scale_factor=1.0,
                 use_path_contraint=False,
             )
 
@@ -833,7 +965,7 @@ class MainControlNode(object):
             target_pose = Pose(
                 position=Point(
                     x=target_pose.position.x + offset,
-                    y=target_pose.position.y - 0.15,
+                    y=self._home_pose.pose.position.y + 0.03,
                     z=target_pose.position.z,
                 ),
                 orientation=self._home_pose.pose.orientation,
@@ -843,19 +975,70 @@ class MainControlNode(object):
                 header=header,
                 target_pose=target_pose,
                 joint_states=None,
-                tolerance=0.1,
-                scale_factor=0.5,
+                tolerance=0.01,
+                scale_factor=1.0,
                 use_path_contraint=False,
             )
 
-            # control_success = self.control_caterian_path(
-            #     header=header,
-            #     target_pose=target_pose,
-            #     joint_states=None,
-            #     tolerance=None,
-            #     scale_factor=0.5,
-            #     use_path_contraint=None,
-            # )
+            self._target_pose_pub.publish(PoseStamped(header=header, pose=target_pose))
+
+            if control_success:
+                self.action_selecting(header=header)
+                self._planning_attempt = 0
+                return control_success
+
+        except ValueError as ve:
+            self._node.get_logger().warn(f"Value Error: {ve}")
+            self._planning_attempt += 1
+
+        except Exception as e:
+            self._node.get_logger().error(f"Unexpected Error: {e}")
+            self._node.get_logger().error("Target Aiming Failed")
+            self._planning_attempt += 1
+
+        return False
+
+    def sweep_target_aiming2(self, header: Header):
+        """
+        Run kinematic path service to get the target object pose.
+        Target pose is the pose which is the front/side of the target object
+        """
+        try:
+            target_pose: Pose = self._control_action.target_object.pose
+
+            target_col = int(self._control_action.target_id[1])  # e.g. 'A1' -> 1
+
+            if self._planning_attempt // 2 == 0:
+                moving_col = max(
+                    [int(id[1]) for id in self._control_action.goal_ids]
+                )  # e.g. ['A0', 'A2'] -> [0, 2]
+            else:
+                moving_col = min([int(id[1]) for id in self._control_action.goal_ids])
+
+            direction = target_col < moving_col  # True for right, False for left
+
+            offset = -0.07 if direction else 0.07
+
+            self._moving_col = moving_col
+            self._node.get_logger().info(f"Set moving col: {moving_col}")
+
+            target_pose = Pose(
+                position=Point(
+                    x=target_pose.position.x + offset,
+                    y=target_pose.position.y - 0.1,
+                    z=target_pose.position.z,
+                ),
+                orientation=self._home_pose.pose.orientation,
+            )
+
+            control_success = self.control(
+                header=header,
+                target_pose=target_pose,
+                joint_states=None,
+                tolerance=0.01,
+                scale_factor=1.0,
+                use_path_contraint=False,
+            )
 
             self._target_pose_pub.publish(PoseStamped(header=header, pose=target_pose))
 
@@ -907,8 +1090,8 @@ class MainControlNode(object):
                 header=header,
                 target_pose=target_pose,
                 joint_states=None,
-                tolerance=0.02,
-                scale_factor=0.5,
+                tolerance=0.01,
+                scale_factor=1.0,
                 use_path_contraint=False,
             )
 
@@ -954,9 +1137,12 @@ class MainControlNode(object):
                     direction = (
                         target_row < moving_rows
                     )  # True for right, False for left
-                    sweep_distance = self._object_selection_manager.get_grid_data()[
-                        "grid_identifier"
-                    ]["grid_size"]["y"]
+                    sweep_distance = (
+                        self._object_selection_manager.get_grid_data()[
+                            "grid_identifier"
+                        ]["grid_size"]["y"]
+                        - 0.02
+                    )
 
                     offset = sweep_distance if direction else -sweep_distance
 
@@ -977,7 +1163,7 @@ class MainControlNode(object):
                         header=header,
                         target_pose=target_pose,
                         joint_states=None,
-                        tolerance=0.02,
+                        tolerance=0.01,
                         scale_factor=0.2,
                         use_path_contraint=False,
                     )
