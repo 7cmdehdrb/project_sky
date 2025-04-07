@@ -194,6 +194,8 @@ class ObjectManager(Manager):
 
         self.indexs = {k: i for i, k in enumerate(self.names.keys())}
 
+        self.reverse_indexs = {i: k for i, k in enumerate(self.names.keys())}
+
         self.color_dict = {
             0: (255, 0, 0),  # Red
             1: (0, 255, 0),  # Green

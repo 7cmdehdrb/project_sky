@@ -154,6 +154,8 @@ class RealTimeSegmentationNode(Node):
         np_boxes = boxes.xyxy.cpu().numpy()
         np_confs = boxes.conf.cpu().numpy()
         np_cls = boxes.cls.cpu().numpy()
+        if masks is not None:
+            np_masks = masks.data.cpu().numpy()
 
         # 바운딩 박스 그리기
         bboxes = BoundingBoxMultiArray()
@@ -193,9 +195,9 @@ class RealTimeSegmentationNode(Node):
                     cls=str(cls),
                     conf=float(conf),  # if difference_ratio > 1.2 else 0.0,
                     bbox=[x1, y1, x2, y2],
-                    mask_row=masks.xy[idx].shape[0],
-                    mask_col=masks.xy[idx].shape[1],
-                    mask_data=np.array(masks.xy[idx], dtype=np.int32)
+                    mask_row=np_masks[idx].shape[0],
+                    mask_col=np_masks[idx].shape[1],
+                    mask_data=np.array(np_masks[idx], dtype=np.int32)
                     .flatten()
                     .tolist(),
                 )
@@ -230,12 +232,17 @@ class RealTimeSegmentationNode(Node):
 
             # mask에 해당하는 픽셀 색 변경
             if masks is not None and masks.data[idx] is not None:
-                mask = masks.data[idx].cpu().numpy()
+                mask = np_masks[idx]
                 color = self._object_manager.color_dict[int(np_cls[idx])]
 
                 # Apply the mask to the image
                 for c in range(3):  # Assuming RGB image
                     np_image[:, :, c] = np.where(mask, color[c], np_image[:, :, c])
+
+            # 경계선 그리기
+            boundary = [160, 300, 460]
+            for b in boundary:
+                cv2.line(np_image, (b, 0), (b, 480), (255, 0, 0), 2)
 
         segmented_image = self._image_manager.encode_message(np_image, encoding="rgb8")
         return segmented_image, bboxes

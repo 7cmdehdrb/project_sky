@@ -40,22 +40,21 @@ from ament_index_python.packages import get_package_share_directory
 from base_package.manager import ImageManager, Manager, ObjectManager
 
 
-class ClosestObjectClassifierNode(Node):
-    def __init__(self, *args, **kwargs):
-        super().__init__("closest_object_classifier_node")
-        self._image_raw = None
-        self._depth_raw = None
+class ClosestObjectClassifierNode(object):
+    def __init__(self, node: Node, *args, **kwargs):
+        self._node = node
+
         self._masks = dict()
 
-        self._threshold = kwargs["threshold"]
+        self._boundary = [160, 300, 460]
 
+        self._threshold = kwargs["threshold"]
+        self._debug = kwargs.get("debug", False)
+
+        self._depth_raw = None
         self._image_manager = ImageManager(
-            self,
+            self._node,
             subscribed_topics=[
-                {
-                    "topic_name": "/camera/camera1/color/image_raw",
-                    "callback": self.image_callback,
-                },
                 {
                     "topic_name": "/camera/camera1/depth/image_rect_raw",
                     "callback": self.depth_callback,
@@ -66,18 +65,18 @@ class ClosestObjectClassifierNode(Node):
             **kwargs,
         )
 
-        self._object_manager = ObjectManager(self, *args, **kwargs)
+        self._object_manager = ObjectManager(self._node, *args, **kwargs)
 
-        self.create_subscription(
+        self._node.create_subscription(
             BoundingBoxMultiArray,
             "/real_time_segmentation_node/segmented_bbox",
             self.bbox_callback,
             qos_profile=qos_profile_system_default,
         )
 
-    def image_callback(self, msg: Image):
-        self._image_raw = self._image_manager.decode_message(
-            msg, desired_encoding="rgb8"
+        self._node.create_timer(
+            0.1,
+            self.get_closest_object,
         )
 
     def depth_callback(self, msg: Image):
@@ -93,39 +92,31 @@ class ClosestObjectClassifierNode(Node):
             mask = np.reshape(np.array(bbox.mask_data), (bbox.mask_row, bbox.mask_col))
             masks[class_id] = mask
         self._masks = masks
-        self.get_closest_object()
-
-    def mask_to_image(self, mask: np.ndarray):
-        image = np.zeros((480, 640), dtype=np.uint8)  # Adjusted to height x width
-        for pixel in mask:
-            if pixel[0] >= 640 or pixel[1] >= 480:  # Ensure bounds are correct
-                self.get_logger().warn(f"ERROR HERE: {pixel}")
-                return None
-
-            image[pixel[1]][pixel[0]] = 1
-        return image
-
-    def masks_image(self, masks: dict):
-        image = np.full((480, 640), "", dtype=object)  # Adjusted to height x width
-        for class_id, mask in masks.items():
-            mask_image = self.mask_to_image(mask)
-            if mask_image is None:
-                continue
-            image[mask_image > 0] = class_id
-        return image
 
     def remove_outliers_iqr(self, depth_image: np.ndarray):
-        if depth_image.ndim != 1:
-            raise ValueError("1차원 ndarray만 지원됩니다.")
+        try:
+            # depth_image = np.log1p(depth_image)
+            # q1 = np.percentile(depth_image, 25)
+            # q3 = np.percentile(depth_image, 75)
+            # iqr = q3 - q1
 
-        q1 = np.percentile(depth_image, 25)
-        q3 = np.percentile(depth_image, 75)
-        iqr = q3 - q1
+            # lower_bound = q1 - 1.5 * iqr
+            # upper_bound = q3 + 1.5 * iqr
 
-        lower_bound = q1 - 1.5 * iqr
-        upper_bound = q3 + 1.5 * iqr
+            # result = depth_image[
+            #     (depth_image >= lower_bound) & (depth_image <= upper_bound)
+            # ]
+            # result = np.expm1(result)
+            result = depth_image[depth_image < 1240]
+            return result
 
-        return depth_image[(depth_image >= lower_bound) & (depth_image <= upper_bound)]
+        except IndexError as e:
+            self._node.get_logger().warn("Fail to remove outliers")
+
+        except Exception as e:
+            self._node.get_logger().error(f"Error removing outliers: {e}")
+
+        return depth_image
 
     def get_closest_object(self):
         if self._depth_raw is None:
@@ -133,38 +124,14 @@ class ClosestObjectClassifierNode(Node):
 
         # Crop the depth image to the same size as the RGB image
         depth_image = self._image_manager.crop_image(self._depth_raw)
-        if depth_image.shape != (480, 640):  # Ensure depth image shape matches
-            print(f"Depth image shape mismatch: {depth_image.shape}")
-            return None
 
-        distance = dict()
-        center = dict()
+        # Translate the depth image for difference between RGB and depth
+        zero_pixel = np.zeros((480, 40), dtype=np.uint16)
 
-        # Calculate the average distance and center point for each object
-        for class_id, mask in self._masks.items():
-            mask_image = self.mask_to_image(mask).astype(bool)  # 0, 1 (640, 480)
-            if mask_image is None:
-                self.get_logger().warn(f"MASK: {class_id}")
-                continue
-            if mask_image.shape != (480, 640):  # Ensure mask image shape matches
-                print(
-                    f"Mask image shape mismatch for class {class_id}: {mask_image.shape}"
-                )
-                continue
-            mask_depth = depth_image[mask_image]  # (640, 480)
-            mask_depth = mask_depth[mask_depth > 0]  # Remove zero values
-            mask_depth = self.remove_outliers_iqr(mask_depth)  # Remove outliers
-            center_x = np.mean(mask[:, 0])
-            center_y = np.mean(mask[:, 1])
-            print(
-                f"CLS: {class_id}, MEAN: {np.mean(mask_depth)}, STD: {np.std(mask_depth)}, MAX: {np.max(mask_depth)}, MIN: {np.min(mask_depth)}, 50%: {np.percentile(mask_depth, 50)}"
-            )
+        depth_image = np.hstack([depth_image, zero_pixel])
+        depth_image = depth_image[:, 40:]  # Ensure depth image is 640x480
 
-            distance[class_id] = np.mean(mask_depth)
-            center[class_id] = (center_x, center_y)
-
-        # Grouping objects which are in the same column based on their center points x coordinate
-        # If the difference between the x coordinates of two objects is less than threshold, they are considered in the same column
+        # Initialize the grouped objects
         grouped_objects = {
             0: [],
             1: [],
@@ -172,65 +139,55 @@ class ClosestObjectClassifierNode(Node):
             3: [],
         }
 
-        def get_empty_group():
-            for key, value in grouped_objects.items():
-                if len(value) == 0:
-                    return key
-            return None
+        # Calculate the average distance and center point for each object
+        for class_id, mask in self._masks.items():
+            mask = mask.astype(bool)  # Convert mask to uint8
+            mask_depth = depth_image[mask]  # (640, 480)
+            mask_depth = mask_depth[mask_depth > 0]  # Remove zero values
+            mask_depth = self.remove_outliers_iqr(mask_depth)  # Remove outliers
 
-        for class_id, center_point in center.items():
-            class_id: str  # e.g. "cup_1"
-            center_point: tuple  # e.g. (x, y) pixel
+            mask_x = np.where(mask)[1]  # Get x coordinates of the mask
+            center_x = np.mean(mask_x)  # Calculate the center x coordinate
 
-            if class_id not in distance:
-                continue
+            idx = (
+                0
+                if center_x < self._boundary[0]
+                else (
+                    1
+                    if center_x < self._boundary[1]
+                    else 2 if center_x < self._boundary[2] else 3
+                )
+            )
+            grouped_objects[idx].append(
+                {
+                    "class_id": self._object_manager.indexs[class_id],
+                    "distance": np.mean(mask_depth),
+                }
+            )
 
-            # Main Loop
-            flag = False
-            for key, value in grouped_objects.items():
-                if len(value) == 0:
-                    continue
-                pixel_distance = abs(center[value[0]][0] - center_point[0])
+        # Initialize the result dictionary
+        result = {
+            0: {"class_id": -1, "distance": None},
+            1: {"class_id": -1, "distance": None},
+            2: {"class_id": -1, "distance": None},
+            3: {"class_id": -1, "distance": None},
+        }
 
-                if pixel_distance < self._threshold:
-                    value.append(class_id)
-                    flag = True
-                    break
-
-            if not flag:
-                empty_group_key = get_empty_group()
-                if empty_group_key is not None:
-                    grouped_objects[empty_group_key].append(class_id)
-                else:
-                    self.get_logger().warn(
-                        f"All groups are full. Unable to classify object {class_id}."
-                    )
-                    continue
-
-        temp = []
+        # Find the closest object in each group
         for key, value in grouped_objects.items():
             if len(value) > 0:
-                temp.append(value)
-        grouped_objects = temp
+                value.sort(key=lambda x: x["distance"])
+                result[key] = value[0]
 
-        print("Grouped Objects:", grouped_objects)
+        if self._debug:
+            for key, value in result.items():
+                print(
+                    f"Group {key}: {self._object_manager.reverse_indexs[value['class_id']] if value['class_id'] != -1 else 'None'}",
+                    end=", ",
+                )
+            print("")
 
-        try:
-            # Find the closest object in each group
-            closest_object = []
-            for group in grouped_objects:
-                min_distance = min(
-                    [distance[obj] for obj in group if obj in distance]
-                )  # Find the minimum distance in the group
-                min_class_id = [obj for obj in group if distance[obj] == min_distance]
-                closest_object.append(min_class_id)
-            print("Closest Object:", closest_object)
-
-        except Exception as e:
-            print(f"Error finding closest object: {e}")
-            return None
-
-        return closest_object
+        return result
 
 
 def main(args=None):
@@ -244,11 +201,20 @@ def main(args=None):
         default=50,
         help="Threshold for object classification",
     )
+    parser.add_argument(
+        "--debug",
+        type=bool,
+        required=False,
+        default=False,
+        help="Enable debug mode",
+    )
 
     args = parser.parse_args()
     kagrs = vars(args)
 
-    node = ClosestObjectClassifierNode(**kagrs)
+    node = Node("closest_object_classifier_node")
+
+    main_node = ClosestObjectClassifierNode(node, **kagrs)
 
     rclpy.spin(node=node)
 
