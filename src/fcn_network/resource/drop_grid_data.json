@@ -3,9 +3,9 @@
     "columns": [0, 1],
     "grid_identifier": {
         "grid_size": {
-            "x": 0.13,
-            "y": 0.20,
-            "z": 0.10
+            "x": 0.15,
+            "y": 0.15,
+            "z": 0.01
         },
         "start_center_coord": {
             "x": 0.3,

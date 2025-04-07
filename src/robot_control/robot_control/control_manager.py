@@ -563,9 +563,12 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
 
     def get_default_collision_objects(self) -> List[BoundingBox3D]:
         data = []
+
+        idx = 900
+
         data.append(
             BoundingBox3D(
-                id=999,
+                id=idx,
                 cls="camera_box",
                 pose=Pose(
                     position=Point(x=-0.04, y=-0.39, z=0.3),
@@ -574,11 +577,12 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
                 scale=Vector3(x=0.15, y=0.06, z=0.6),
             )
         )
+        idx += 1
 
         # Add Plane Box
         data.append(
             BoundingBox3D(
-                id=998,
+                id=idx,
                 cls="plane_box",
                 pose=Pose(
                     position=Point(x=0.0, y=0.0, z=-0.5 - 0.01),
@@ -587,11 +591,12 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
                 scale=Vector3(x=0.8, y=0.44, z=1.0),
             )
         )
+        idx += 1
 
         # Add Shelf Box
         data.append(
             BoundingBox3D(
-                id=997,
+                id=idx,
                 cls="shelf_box1",
                 pose=Pose(
                     position=Point(x=0.0, y=0.6, z=0.0),
@@ -600,10 +605,11 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
                 scale=Vector3(x=0.8, y=0.44, z=0.5),
             )
         )
+        idx += 1
 
         data.append(
             BoundingBox3D(
-                id=996,
+                id=idx,
                 cls="shelf_box2",
                 pose=Pose(
                     position=Point(x=0.0, y=0.6, z=0.7),
@@ -612,10 +618,11 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
                 scale=Vector3(x=0.8, y=0.44, z=0.04),
             )
         )
+        idx += 1
 
         data.append(
             BoundingBox3D(
-                id=995,
+                id=idx,
                 cls="shelf_side_box1",
                 pose=Pose(
                     position=Point(x=0.54, y=0.6, z=0.0),
@@ -624,10 +631,11 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
                 scale=Vector3(x=0.1, y=0.4, z=1.0),
             )
         )
+        idx += 1
 
         data.append(
             BoundingBox3D(
-                id=995,
+                id=idx,
                 cls="shelf_side_box2",
                 pose=Pose(
                     position=Point(x=-0.52, y=0.6, z=0.0),
@@ -636,6 +644,7 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
                 scale=Vector3(x=0.1, y=0.4, z=1.0),
             )
         )
+        idx += 1
 
         return BoundingBox3DMultiArray(data=data)
 
@@ -648,6 +657,12 @@ class CartesianPath_ServiceManager(ServiceManager):
             service_type=GetCartesianPath,
             *args,
             **kwargs,
+        )
+
+        self._catesian_path_publisher = self._node.create_publisher(
+            Path,
+            self._node.get_name() + "/cartesian_path",
+            qos_profile=qos_profile_system_default,
         )
 
         self._fraction_threshold = fraction_threshold
@@ -706,6 +721,16 @@ class CartesianPath_ServiceManager(ServiceManager):
             )
             return None
 
+        path: Path = ForwardKinematics.parse_robot_trajectory_to_path(
+            header=Header(
+                stamp=self._node.get_clock().now().to_msg(),
+                frame_id="world",
+            ),
+            joint_trajectory=trajectory,
+        )
+        for _ in range(10):
+            self._catesian_path_publisher.publish(path)
+
         return trajectory
 
 
@@ -722,6 +747,11 @@ class KinematicPath_ServiceManager(ServiceManager):
         )
 
         self._planning_group = planning_group
+        self._kinematic_path_publisher = self._node.create_publisher(
+            Path,
+            self._node.get_name() + "/kinematic_path",
+            qos_profile=qos_profile_system_default,
+        )
 
     def run(
         self,
@@ -768,9 +798,19 @@ class KinematicPath_ServiceManager(ServiceManager):
             request.motion_plan_request.path_constraints = path_constraints
 
         response: GetMotionPlan.Response = self.send_request(request)
-        result = self.handle_response(response)
+        trajectory: RobotTrajectory = self.handle_response(response)
 
-        return result
+        path: Path = ForwardKinematics.parse_robot_trajectory_to_path(
+            header=Header(
+                stamp=self._node.get_clock().now().to_msg(),
+                frame_id="world",
+            ),
+            joint_trajectory=trajectory,
+        )
+        for _ in range(10):
+            self._kinematic_path_publisher.publish(path)
+
+        return trajectory
 
     def handle_response(
         self,
@@ -1037,11 +1077,16 @@ class DropGridManager(GridManager):
             self._node.get_name() + "/drop_grids",
             qos_profile=qos_profile_system_default,
         )
+        self._collision_objects: List[CollisionObject] = []
 
         # >>> Set Attributes >>>
         for grid in self._grids:
             grid: DropGridManager.Grid
             setattr(grid, "is_dropped", False)
+
+    @property
+    def collision_objects(self) -> List[CollisionObject]:
+        return self._collision_objects
 
     def publish_grid_marker(self):
         """
@@ -1059,10 +1104,10 @@ class DropGridManager(GridManager):
             )
 
             if grid.is_dropped:
-                marker.color = ColorRGBA(r=1.0, g=0.0, b=0.0, a=1.0)  # RED
+                marker.color = ColorRGBA(r=1.0, g=0.0, b=0.0, a=0.3)  # RED
 
             else:
-                marker.color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=1.0)  # GREEN
+                marker.color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=0.3)  # GREEN
 
             marker_array.markers.append(marker)
 
@@ -1085,7 +1130,7 @@ class DropGridManager(GridManager):
 
         for col in self._cols:  # 0, 1, 2, ../
             col: DropGridManager.Line
-            girds = col.grids
+            girds = reversed(col.grids)
 
             if empty_grid is not None:
                 break
@@ -1098,3 +1143,8 @@ class DropGridManager(GridManager):
                     break
 
         return empty_grid
+
+    def append_collision_object(self, collision_object: CollisionObject):
+        self._collision_objects.append(collision_object)
+
+        return self._collision_objects

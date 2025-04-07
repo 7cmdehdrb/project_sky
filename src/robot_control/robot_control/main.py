@@ -190,6 +190,24 @@ class MainControlNode(object):
                 -1.616389576588766,
             ],
         )
+        self._home_up_joints = JointState(
+            name=[
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+                "shoulder_pan_joint",
+            ],
+            position=[
+                -0.8533289450337911,
+                -2.2019173476285356,
+                -3.243817707337641,
+                4.6992510001573615,
+                3.107277000002501,
+                -1.6112989998426164,
+            ],
+        )
         self._dropping_joints = JointState(
             name=[
                 "shoulder_lift_joint",
@@ -264,6 +282,7 @@ class MainControlNode(object):
         )
 
         self._home_pose: PoseStamped = None
+        self._home_up_pose: PoseStamped = None
         self._drop_pose: PoseStamped = None
         self._sweeping_to_right_pose: PoseStamped = None
         self._sweeping_to_left_pose: PoseStamped = None
@@ -274,7 +293,7 @@ class MainControlNode(object):
         self._moving_col: int = -1
         self._target_pose_pub = self._node.create_publisher(
             PoseStamped,
-            "/target_pose",
+            self._node.get_name() + "/target_pose",
             qos_profile_system_default,
         )
 
@@ -282,8 +301,6 @@ class MainControlNode(object):
 
     def run(self):
         self._node.get_logger().info(f"State: {self._state.name}")
-
-        self._drop_grid_manager.publish_grid_marker()
 
         self._operations[self._state.value](
             header=Header(
@@ -340,6 +357,11 @@ class MainControlNode(object):
             if self._home_pose is None:
                 self._home_pose = self._fk_service_manager.run(
                     joint_states=self._home_joints,
+                    end_effector=self._end_effector,
+                )
+            if self._home_up_pose is None:
+                self._home_up_pose = self._fk_service_manager.run(
+                    joint_states=self._home_up_joints,
                     end_effector=self._end_effector,
                 )
             if self._drop_pose is None:
@@ -403,7 +425,11 @@ class MainControlNode(object):
                         bbox_3d=transformed_bbox_3d,
                     )
                     is_applying_success = self._apply_planning_scene_service_manager.add_collistion_objects(
-                        collision_objects=collision_objects, scene=current_scene
+                        collision_objects=(
+                            collision_objects
+                            + self._drop_grid_manager.collision_objects
+                        ),
+                        scene=current_scene,
                     )
                     is_applying_default_success = self._apply_planning_scene_service_manager.append_default_collision_objects(
                         header=header,
@@ -520,14 +546,11 @@ class MainControlNode(object):
         Target pose is the pose which is located above the target object.
         """
         try:
-            target_pose = Pose(
-                position=Point(
-                    x=self._home_pose.pose.position.x,
-                    y=self._home_pose.pose.position.y,
-                    z=self._home_pose.pose.position.z,
-                ),
-                orientation=self._home_pose.pose.orientation,
-            )
+            if self._state == State.GARSPING_HOMING2:
+                target_pose = self._home_up_pose.pose
+
+            else:
+                target_pose = self._home_pose.pose
 
             control_success = self.control(
                 header=header,
@@ -683,6 +706,8 @@ class MainControlNode(object):
         """
 
         try:
+            self._drop_grid_manager.publish_grid_marker()
+
             control_success = self.control(
                 header=header,
                 target_pose=None,  # To ignore the target pose
@@ -707,6 +732,8 @@ class MainControlNode(object):
 
     def drop_table_positioning(self, header: Header):
         try:
+            self._drop_grid_manager.publish_grid_marker()
+
             # >>> STEP 1. Get Empty Drop Grid >>>
             empty_grid: GridManager.Grid = self._drop_grid_manager.get_target_grid()
 
@@ -723,14 +750,15 @@ class MainControlNode(object):
                     target_frame="world",
                 )
             )
+            final_target_pose = Pose(
+                position=transformed_target_pose.pose.position,
+                orientation=self._drop_pose.pose.orientation,  # TODO: Check the orientation
+            )
 
             # >>> STEP 3. Plan & Execute Trajectory >>>
             is_success = self.control(
                 header=header,
-                target_pose=Pose(
-                    position=transformed_target_pose.pose.position,
-                    orientation=self._drop_pose.pose.orientation,  # TODO: Check the orientation
-                ),
+                target_pose=final_target_pose,
                 joint_states=None,
                 tolerance=0.01,
                 scale_factor=0.5,
@@ -738,9 +766,32 @@ class MainControlNode(object):
             )
 
             if is_success:
+                # >>> STEP 4. Update the drop grid >>>
                 self._drop_grid_manager.set_grid_dropped(
                     col=empty_grid.col, row=empty_grid.row
                 )
+
+                # >>> STEP 5. Get collision object >>>
+                collision_object = (
+                    self._apply_planning_scene_service_manager.create_collision_object(
+                        id=f"drop{empty_grid.row}{empty_grid.col}",
+                        header=header,
+                        pose=final_target_pose,
+                        scale=Vector3(x=0.03, y=0.03, z=0.03),
+                        operation=CollisionObject.ADD,
+                    )
+                )
+                collision_objects = self._drop_grid_manager.append_collision_object(
+                    collision_object=collision_object,
+                )
+
+                # >>> STEP 6. Update the planning scene >>>
+                current_scene = self._get_planning_scene_service_manager.run()
+                self._apply_planning_scene_service_manager.add_collistion_objects(
+                    collision_objects=collision_objects,
+                    scene=current_scene,
+                )
+
                 self._node.get_logger().info(
                     f"Drop to {empty_grid.col}{empty_grid.row}"
                 )
