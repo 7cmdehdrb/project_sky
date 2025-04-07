@@ -13,10 +13,14 @@ from launch_ros.actions import Node
 def generate_launch_description():
     # 런치 인자 선언
     model_file_arg = DeclareLaunchArgument(
-        "model_file", description="Path to the trained FCN model"
+        "model_file",
+        description="Path to the trained FCN model",
+        default_value="best_model.pth",
     )
     grid_data_file_arg = DeclareLaunchArgument(
-        "grid_data_file", description="Path to the grid data file"
+        "grid_data_file",
+        description="Path to the grid data file",
+        default_value="grid_data.json",
     )
     fcn_image_transform_arg = DeclareLaunchArgument(
         "fcn_image_transform",

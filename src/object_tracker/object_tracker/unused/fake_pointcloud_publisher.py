@@ -38,7 +38,20 @@ class FakePointCloudPublisher(Node):
         self._grid_manager = GridManager(self, *args, **kwargs)
         self._grid_data = self._grid_manager.get_grid_data()
 
-        self._target_ids = ["A2", "B0", "C0", "C1", "C2", "C3"]
+        self._target_ids = [
+            # "A0",
+            # "A1",
+            # "A2",
+            # "A3",
+            "B0",
+            "B1",
+            "B2",
+            "B3",
+            "C0",
+            "C1",
+            "C2",
+            "C3",
+        ]
         # A1 B1
 
         self._pub = self.create_publisher(

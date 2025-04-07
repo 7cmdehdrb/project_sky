@@ -1026,3 +1026,75 @@ class ControlAction(object):
     @property
     def target_object(self) -> BoundingBox3D:
         return self._target_object
+
+
+class DropGridManager(GridManager):
+    def __init__(self, node: Node, *args, **kwargs):
+        super().__init__(node, *args, **kwargs)
+
+        self._grid_marker_publisher = self._node.create_publisher(
+            MarkerArray,
+            self._node.get_name() + "/drop_grids",
+            qos_profile=qos_profile_system_default,
+        )
+
+        # >>> Set Attributes >>>
+        for grid in self._grids:
+            grid: DropGridManager.Grid
+            setattr(grid, "is_dropped", False)
+
+    def publish_grid_marker(self):
+        """
+        Publish the grid marker.
+        """
+        marker_array = MarkerArray()
+
+        for grid in self._grids:
+            grid: DropGridManager.Grid
+            marker: Marker = grid.get_marker(
+                header=Header(
+                    stamp=self._node.get_clock().now().to_msg(),
+                    frame_id="camera1_link",
+                )
+            )
+
+            if grid.is_dropped:
+                marker.color = ColorRGBA(r=1.0, g=0.0, b=0.0, a=1.0)  # RED
+
+            else:
+                marker.color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=1.0)  # GREEN
+
+            marker_array.markers.append(marker)
+
+        self._node.get_logger().info(f"Publishing {len(marker_array.markers)} markers")
+
+        self._grid_marker_publisher.publish(marker_array)
+
+    def set_grid_dropped(self, row: str, col: int):
+        """
+        Set the grid as dropped.
+        :param grid_id: str
+            The grid ID to set as dropped.
+        """
+        target_grid = self.get_grid(row=row, col=col)
+        target_grid.is_dropped = True
+        return target_grid
+
+    def get_target_grid(self):
+        empty_grid: DropGridManager.Grid = None
+
+        for col in self._cols:  # 0, 1, 2, ../
+            col: DropGridManager.Line
+            girds = col.grids
+
+            if empty_grid is not None:
+                break
+
+            for grid in girds:
+                grid: DropGridManager.Grid
+
+                if not grid.is_dropped:
+                    empty_grid = grid
+                    break
+
+        return empty_grid

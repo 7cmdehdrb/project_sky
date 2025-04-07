@@ -7,11 +7,15 @@ from launch_ros.actions import Node
 def generate_launch_description():
     # 런치 인자 선언
     grid_data_file_arg = DeclareLaunchArgument(
-        "grid_data_file", description="Path to the grid data file"
+        "grid_data_file",
+        description="Path to the grid data file",
+        default_value="grid_data.json",
     )
 
     obj_bounds_file_arg = DeclareLaunchArgument(
-        "obj_bounds_file", description="Path to the object bounds file"
+        "obj_bounds_file",
+        description="Path to the object bounds file",
+        default_value="obj_bounds.json",
     )
 
     is_test_arg = DeclareLaunchArgument(

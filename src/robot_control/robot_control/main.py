@@ -46,6 +46,7 @@ from robot_control.control_manager import (
     JointStatesManager,
     ObjectSelectionManager,
     ControlAction,
+    DropGridManager,
 )
 
 
@@ -64,7 +65,8 @@ class State(Enum):
     GARSPING_HOME_AIMING = 14  # Move to the front of the target object
     GARSPING_HOMING2 = 15
     GARSPING_DROP_POSITIONING = 16  # Move to the drop pose
-    GARSPING_UNGRASPING = 17
+    GRASPING_DROP_TABLE_POSITIONING = 17  # Move to the drop pose
+    GARSPING_UNGRASPING = 18
 
     SWEEPING_HOMING1 = 20  # Move to the home pose
     SWEEPING_TARGET_AIMING = 21  # Move to the front of the target object
@@ -87,6 +89,11 @@ class MainControlNode(object):
             node=self._node, *args, **kwargs
         )
 
+        drop_grid_manager_kwargs = dict(kwargs)
+        drop_grid_manager_kwargs["grid_data_file"] = kwargs["drop_grid_data_file"]
+        self._drop_grid_manager = DropGridManager(
+            node=self._node, *args, **drop_grid_manager_kwargs
+        )
         self._object_pose_estimation_manager = ObjectPoseEstimationManager(
             node=self._node, *args, **kwargs
         )
@@ -146,6 +153,7 @@ class MainControlNode(object):
             State.GARSPING_HOME_AIMING.value: self.home_aiming,
             State.GARSPING_HOMING2.value: self.home_positioning,
             State.GARSPING_DROP_POSITIONING.value: self.drop_positioning,
+            State.GRASPING_DROP_TABLE_POSITIONING.value: self.drop_table_positioning,
             State.GARSPING_UNGRASPING.value: self.ungrasping,
             # LEVEL 4
             State.SWEEPING_HOMING1.value: self.home_positioning,
@@ -197,7 +205,7 @@ class MainControlNode(object):
                 -3.0269695721068324,
                 4.695071220397949,
                 3.1019468307495117,
-                1.1181697845458984,
+                0.0,
             ],
         )
         self._waiting_joints = JointState(
@@ -218,7 +226,7 @@ class MainControlNode(object):
                 -0.006377998982564748,
             ],
         )
-        self._sweeping_joints = JointState(
+        self._sweeping_to_right_joints = JointState(
             name=[
                 "shoulder_lift_joint",
                 "elbow_joint",
@@ -236,10 +244,29 @@ class MainControlNode(object):
                 -0.2675898710833948,
             ],
         )
+        self._sweeping_to_left_joints = JointState(
+            name=[
+                "shoulder_lift_joint",
+                "elbow_joint",
+                "wrist_1_joint",
+                "wrist_2_joint",
+                "wrist_3_joint",
+                "shoulder_pan_joint",
+            ],
+            position=[
+                -0.20895393312487798,
+                -2.306225299835205,
+                -3.866194864312643,
+                6.038235187530518,
+                np.pi * 0.5,
+                -0.2675898710833948,
+            ],
+        )
 
         self._home_pose: PoseStamped = None
         self._drop_pose: PoseStamped = None
-        self._sweeping_pose: PoseStamped = None
+        self._sweeping_to_right_pose: PoseStamped = None
+        self._sweeping_to_left_pose: PoseStamped = None
         # <<< Unique Joint States <<<
 
         # >>> TEST >>>
@@ -255,6 +282,8 @@ class MainControlNode(object):
 
     def run(self):
         self._node.get_logger().info(f"State: {self._state.name}")
+
+        self._drop_grid_manager.publish_grid_marker()
 
         self._operations[self._state.value](
             header=Header(
@@ -282,6 +311,7 @@ class MainControlNode(object):
 
         # CASE 1. Grasping
         elif self._control_action.action:
+
             if self._state == State.FCN_SEARCHING:
                 self._state = State.SWEEPING_HOMING1
             elif self._state == State.SWEEPING_HOMING2:
@@ -317,9 +347,14 @@ class MainControlNode(object):
                     joint_states=self._dropping_joints,
                     end_effector=self._end_effector,
                 )
-            if self._sweeping_pose is None:
-                self._sweeping_pose = self._fk_service_manager.run(
-                    joint_states=self._sweeping_joints,
+            if self._sweeping_to_left_pose is None:
+                self._sweeping_to_left_pose = self._fk_service_manager.run(
+                    joint_states=self._sweeping_to_left_joints,
+                    end_effector=self._end_effector,
+                )
+            if self._sweeping_to_right_pose is None:
+                self._sweeping_to_right_pose = self._fk_service_manager.run(
+                    joint_states=self._sweeping_to_right_joints,
                     end_effector=self._end_effector,
                 )
             self.action_selecting(header=header)
@@ -670,6 +705,55 @@ class MainControlNode(object):
 
         return False
 
+    def drop_table_positioning(self, header: Header):
+        try:
+            # >>> STEP 1. Get Empty Drop Grid >>>
+            empty_grid: GridManager.Grid = self._drop_grid_manager.get_target_grid()
+
+            # >>> STEP 2. Transform the drop pose >>>
+            target_position: Point = empty_grid.center_coord
+            target_pose = Pose(
+                position=target_position,
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            )
+            transformed_target_pose: PoseStamped = (
+                self._transform_manager.transform_pose(
+                    pose=target_pose,
+                    source_frame="camera1_link",
+                    target_frame="world",
+                )
+            )
+
+            # >>> STEP 3. Plan & Execute Trajectory >>>
+            is_success = self.control(
+                header=header,
+                target_pose=Pose(
+                    position=transformed_target_pose.pose.position,
+                    orientation=self._drop_pose.pose.orientation,  # TODO: Check the orientation
+                ),
+                joint_states=None,
+                tolerance=0.01,
+                scale_factor=0.5,
+                use_path_contraint=False,
+            )
+
+            if is_success:
+                self._drop_grid_manager.set_grid_dropped(
+                    col=empty_grid.col, row=empty_grid.row
+                )
+                self._node.get_logger().info(
+                    f"Drop to {empty_grid.col}{empty_grid.row}"
+                )
+                self.action_selecting(header=header)
+                return True
+
+        except ValueError as ve:
+            self._node.get_logger().warn(f"Value Error: {ve}")
+
+        except Exception as e:
+            self._node.get_logger().error(f"Unexpected Error: {e}")
+            self._node.get_logger().error("Drop Table Positioning Failed")
+
     # >>> LEVEL 4 >>>
     def sweep_target_aiming(self, header: Header):
         """
@@ -761,7 +845,11 @@ class MainControlNode(object):
                     y=target_pose.position.y,
                     z=target_pose.position.z,
                 ),
-                orientation=self._sweeping_pose.pose.orientation,
+                orientation=(
+                    self._sweeping_to_right_pose.pose.orientation
+                    if direction
+                    else self._sweeping_to_left_pose.pose.orientation
+                ),
             )
 
             control_success = self.control(
@@ -827,7 +915,11 @@ class MainControlNode(object):
                             y=target_pose.position.y,
                             z=target_pose.position.z,
                         ),
-                        orientation=self._sweeping_pose.pose.orientation,
+                        orientation=(
+                            self._sweeping_to_right_pose.pose.orientation
+                            if direction
+                            else self._sweeping_to_left_pose.pose.orientation
+                        ),
                     )
 
                     control_success = self.control(
@@ -1034,6 +1126,13 @@ def main():
         type=str,
         required=False,
         default="grid_data.json",
+        help="Path or file name of object bounds. If input is a file name, the file should be located in the 'resource' directory. Required",
+    )
+    parser.add_argument(
+        "--drop_grid_data_file",
+        type=str,
+        required=False,
+        default="drop_grid_data.json",
         help="Path or file name of object bounds. If input is a file name, the file should be located in the 'resource' directory. Required",
     )
     parser.add_argument(

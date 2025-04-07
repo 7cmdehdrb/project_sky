@@ -7,19 +7,27 @@ from launch_ros.actions import Node
 def generate_launch_description():
     # 런치 인자 선언
     use_depth_arg = DeclareLaunchArgument(
-        "use_depth", description="Whether to use depth information"
+        "use_depth",
+        description="Whether to use depth information",
+        default_value="true",
     )
     refiner_iterations_arg = DeclareLaunchArgument(
-        "refiner_iterations", description="Number of iterations for the refiner"
+        "refiner_iterations",
+        description="Number of iterations for the refiner",
+        default_value="5",
     )
     obj_bounds_file_arg = DeclareLaunchArgument(
-        "obj_bounds_file", description="Path to the object bounds file"
+        "obj_bounds_file",
+        description="Path to the object bounds file",
+        default_value="obj_bounds.json",
     )
     host_arg = DeclareLaunchArgument(
-        "host", description="Host address for the robot control"
+        "host",
+        description="Host address for the robot control",
+        default_value="127.0.0.1",
     )
     port_arg = DeclareLaunchArgument(
-        "port", description="Port number for the robot control"
+        "port", description="Port number for the robot control", default_value="5050"
     )
     target_cls_arg = DeclareLaunchArgument(
         "target_cls", description="Target class for the robot control"

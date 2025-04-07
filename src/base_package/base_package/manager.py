@@ -174,7 +174,7 @@ class ImageManager(Manager):
 class ObjectManager(Manager):
     def __init__(self, node: Node, *args, **kwargs):
         super().__init__(node, *args, **kwargs)
-        
+
         self.names = {
             "can_1": "coca_cola",
             "can_2": "cyder",
@@ -229,10 +229,10 @@ class TransformManager(Manager):
                 self._node.get_clock().now().to_msg(),
                 timeout=Duration(seconds=0.1),
             )
-            
+
             if not valid:
                 raise Exception("Transform is not valid")
-            
+
             return valid
         except Exception as e:
             self._node.get_logger().warn(
@@ -240,6 +240,64 @@ class TransformManager(Manager):
             )
             self._node.get_logger().warn(e)
             return False
+
+    def transform_pose(
+        self,
+        pose: Union[Pose, PoseStamped],
+        target_frame: str,
+        source_frame: str,
+    ) -> PoseStamped:
+        """
+        Transform a pose from the source frame to the target frame.
+        """
+        if not isinstance(pose, (Pose, PoseStamped)):
+            self._node.get_logger().warn("Input must be of type Pose or PoseStamped.")
+            return None
+
+        if self.check_transform_valid(target_frame, source_frame):
+            try:
+                transformed_pose_stamped = PoseStamped()
+
+                if isinstance(pose, Pose):
+                    pose: Pose
+                    pose_stamped = TF2PoseStamped(
+                        header=Header(
+                            stamp=self._node.get_clock().now().to_msg(),
+                            frame_id=source_frame,
+                        ),
+                        pose=pose,
+                    )
+                elif isinstance(pose, PoseStamped):
+                    pose: PoseStamped
+                    pose_stamped = TF2PoseStamped(
+                        header=Header(
+                            stamp=self._node.get_clock().now().to_msg(),
+                            frame_id=source_frame,
+                        ),
+                        pose=pose.pose,
+                    )
+                else:
+                    raise TypeError("Input must be of type Pose or PoseStamped.")
+
+                transformed_data = self._tf_buffer.transform(
+                    object_stamped=pose_stamped,
+                    target_frame=target_frame,
+                    timeout=Duration(seconds=1),
+                )
+
+                transformed_pose_stamped.header = transformed_data.header
+                transformed_pose_stamped.pose = transformed_data.pose
+
+                return transformed_pose_stamped
+
+            except Exception as e:
+                self._node.get_logger().warn(
+                    f"Cannot Transform Pose from {source_frame} to {target_frame}"
+                )
+                self._node.get_logger().warn(e)
+                return None
+
+        return None
 
     def transform_bbox_3d(
         self,
@@ -250,7 +308,6 @@ class TransformManager(Manager):
         """
         Transform the bounding box in camera frame to the world frame.
         """
-
         if self.check_transform_valid(target_frame, source_frame):
             # Initialize the transformed bounding box
             transformed_bbox = BoundingBox3DMultiArray()
