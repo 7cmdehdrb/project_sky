@@ -38,24 +38,24 @@ def generate_launch_description():
     )
 
     # FCN 서버 노드 (인자 필수)
-    fcn_node = Node(
-        package="fcn_network",
-        executable="fcn_server",
-        name="fcn_server",
-        output="screen",
-        arguments=[
-            "--model_file",
-            LaunchConfiguration("model_file"),
-            "--grid_data_file",
-            LaunchConfiguration("grid_data_file"),
-            "--fcn_image_transform",
-            LaunchConfiguration("fcn_image_transform"),
-            "--fcn_gain",
-            LaunchConfiguration("fcn_gain"),
-            "--fcn_gamma",
-            LaunchConfiguration("fcn_gamma"),
-        ],
-    )
+    # fcn_node = Node(
+    #     package="fcn_network",
+    #     executable="fcn_server",
+    #     name="fcn_server",
+    #     output="screen",
+    #     arguments=[
+    #         "--model_file",
+    #         LaunchConfiguration("model_file"),
+    #         "--grid_data_file",
+    #         LaunchConfiguration("grid_data_file"),
+    #         "--fcn_image_transform",
+    #         LaunchConfiguration("fcn_image_transform"),
+    #         "--fcn_gain",
+    #         LaunchConfiguration("fcn_gain"),
+    #         "--fcn_gamma",
+    #         LaunchConfiguration("fcn_gamma"),
+    #     ],
+    # )
 
     # 나머지 서버들 (별도 인자 없음으로 가정)
     grid_identifier_node = Node(
@@ -79,7 +79,7 @@ def generate_launch_description():
             fcn_gain_arg,
             fcn_gamma_arg,
             is_test_arg,
-            fcn_node,
+            # fcn_node,
             grid_identifier_node,
         ]
     )

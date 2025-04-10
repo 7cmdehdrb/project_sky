@@ -53,9 +53,10 @@ class ObjectPoseEstimator(Node):
     def __init__(self, *args, **kwargs):
         super().__init__("object_pose_estimator")
 
-        self._is_test = kwargs.get("test_bench", False)
-        self._is_test = False
-        if self._is_test:
+        self._debug = kwargs.get("debug", False)
+        self.get_logger().info(f"Debug Mode: {self._debug}")
+
+        if self._debug:
             self.get_logger().info("Test Bench Mode is ON")
 
         self.pcd_subscirber = self.create_subscription(
@@ -94,7 +95,7 @@ class ObjectPoseEstimator(Node):
             msg=self._pointcloud_msg, rgb=False
         )
 
-        if not self._is_test:
+        if not self._debug:
             transform_matrix = QuaternionAngle.transform_realsense_to_ros(np.eye(4))
             transformed_points = PointCloudTransformer.transform_pointcloud(
                 points, transform_matrix
@@ -113,9 +114,9 @@ class ObjectPoseEstimator(Node):
             center_point = np.mean(points_in_grid, axis=0)
             x_min, y_min, z_min = np.min(points_in_grid, axis=0)
             x_max, y_max, z_max = np.max(points_in_grid, axis=0)
-            x_scale = np.clip(np.abs(x_max - x_min), 0.0, 0.07)
-            y_scale = np.clip(np.abs(y_max - y_min), 0.0, 0.07)
-            z_scale = np.clip(np.abs(z_max - z_min), 0.0, 0.07)
+            x_scale = np.clip(np.abs(x_max - x_min), 0.0, 0.03)
+            y_scale = np.clip(np.abs(y_max - y_min), 0.0, 0.03)
+            z_scale = np.clip(np.abs(z_max - z_min), 0.0, 0.05)
 
             bbox = BoundingBox3D(
                 id=((ord(grid.row) - 64) * 10) + grid.col,
@@ -145,6 +146,7 @@ def main():
     rclpy.init(args=None)
 
     from rclpy.utilities import remove_ros_args
+    from base_package.header import str2bool
 
     # Remove ROS2 arguments
     argv = remove_ros_args(sys.argv)
@@ -152,8 +154,8 @@ def main():
     parser = argparse.ArgumentParser(description="FCN Server Node")
 
     parser.add_argument(
-        "--test_bench",
-        type=bool,
+        "--debug",
+        type=str2bool,
         default=False,
         help="Test Bench Mode. If True, the node will run in test bench mode.",
     )

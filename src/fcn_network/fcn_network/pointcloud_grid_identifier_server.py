@@ -63,8 +63,7 @@ class PointCloudGridIdentifier(Node):
 
         # >>> Data >>>
         self._pointcloud_msg: PointCloud2 = None
-        self._is_test = kwargs.get("test_bench", False)
-        self._is_test = False
+        self._debug = kwargs.get("debug", False)
         # <<< Data <<<
 
         self.get_logger().info("Pointcloud Grid Identifier Node has been initialized.")
@@ -180,7 +179,7 @@ class PointCloudGridIdentifier(Node):
         points = PointCloudTransformer.pointcloud2_to_numpy(
             msg=self._pointcloud_msg, rgb=False
         )
-        if not self._is_test:
+        if not self._debug:
             transform_matrix = QuaternionAngle.transform_realsense_to_ros(np.eye(4))
             transformed_points = PointCloudTransformer.transform_pointcloud(
                 points, transform_matrix
@@ -207,6 +206,7 @@ def main():
     rclpy.init(args=None)
 
     from rclpy.utilities import remove_ros_args
+    from base_package.header import str2bool
 
     # Remove ROS2 arguments
     argv = remove_ros_args(sys.argv)
@@ -214,8 +214,8 @@ def main():
     parser = argparse.ArgumentParser(description="FCN Server Node")
 
     parser.add_argument(
-        "--test_bench",
-        type=bool,
+        "--debug",
+        type=str2bool,
         default=False,
         help="Path or file name of the grid manager. If input is a file name, the file should be located in the 'resource' directory.",
     )

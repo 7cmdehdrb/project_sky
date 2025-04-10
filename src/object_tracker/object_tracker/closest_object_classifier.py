@@ -179,13 +179,13 @@ class ClosestObjectClassifierNode(object):
                 value.sort(key=lambda x: x["distance"])
                 result[key] = value[0]
 
-        if self._debug:
-            for key, value in result.items():
-                print(
-                    f"Group {key}: {self._object_manager.reverse_indexs[value['class_id']] if value['class_id'] != -1 else 'None'}",
-                    end=", ",
-                )
-            print("")
+            # if self._debug:
+            #     for key, value in result.items():
+            #         print(
+            #             f"Group {key}: {self._object_manager.reverse_indexs[value['class_id']] if value['class_id'] != -1 else 'None'}",
+            #             end=", ",
+            #         )
+            # print("")
 
         return result
 
@@ -193,7 +193,14 @@ class ClosestObjectClassifierNode(object):
 def main(args=None):
     rclpy.init(args=args)
 
+    from base_package.header import str2bool
+    from rclpy.utilities import remove_ros_args
+
+    # Remove ROS2 arguments
+    argv = remove_ros_args(sys.argv)
+
     parser = argparse.ArgumentParser(description="Closest Object Classifier Node")
+
     parser.add_argument(
         "--threshold",
         type=int,
@@ -203,13 +210,13 @@ def main(args=None):
     )
     parser.add_argument(
         "--debug",
-        type=bool,
+        type=str2bool,
         required=False,
         default=False,
         help="Enable debug mode",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv[1:])
     kagrs = vars(args)
 
     node = Node("closest_object_classifier_node")

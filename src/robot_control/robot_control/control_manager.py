@@ -603,7 +603,7 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
                     orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
                 ),
                 # scale=Vector3(x=0.8, y=0.44, z=10.0),
-                scale=Vector3(x=0.8, y=0.44, z=0.5),
+                scale=Vector3(x=0.8, y=0.44, z=0.52),  # 54
             )
         )
         idx += 1
@@ -639,7 +639,7 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
                 id=idx,
                 cls="shelf_side_box2",
                 pose=Pose(
-                    position=Point(x=-0.52, y=0.6, z=0.0),
+                    position=Point(x=-0.54, y=0.6, z=0.0),
                     orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
                 ),
                 scale=Vector3(x=0.1, y=0.4, z=1.0),
@@ -943,7 +943,7 @@ class JointStatesManager(Manager):
         self._joint_states = None
         self._joint_states_subscriber = self._node.create_subscription(
             JointState,
-            "/joint_states",
+            "/ur5e/joint_states",
             self.joint_states_callback,
             qos_profile=qos_profile_system_default,
         )
@@ -1131,12 +1131,13 @@ class DropGridManager(GridManager):
 
         for col in self._cols:  # 0, 1, 2, ../
             col: DropGridManager.Line
-            girds = reversed(col.grids)
+            # girds = reversed(col.grids)
+            grids = col.grids
 
             if empty_grid is not None:
                 break
 
-            for grid in girds:
+            for grid in grids:
                 grid: DropGridManager.Grid
 
                 if not grid.is_dropped:
@@ -1149,3 +1150,67 @@ class DropGridManager(GridManager):
         self._collision_objects.append(collision_object)
 
         return self._collision_objects
+
+
+import random
+
+
+class RandomSearchManager(Manager):
+    def __init__(self, node: Node, *args, **kwargs):
+        super().__init__(node, *args, **kwargs)
+
+    def get_random_target(self, target_objects: BoundingBox3DMultiArray):
+        """
+        Get random target object from the target objects.
+        :param target_objects: BoundingBox3DMultiArray
+            The target objects to select from. The frame of the target objects should be "world".
+        """
+        if target_objects is None or not isinstance(
+            target_objects, BoundingBox3DMultiArray
+        ):
+            raise ValueError("target_objects must be provided.")
+
+        if len(target_objects.data) == 0:
+            raise ValueError("target_objects must be provided.")
+
+        # >>> STEP 1. Split the target objects by column >>>
+        target_objects_by_col = {
+            0: [],
+            1: [],
+            2: [],
+            3: [],
+        }
+
+        for target_object in target_objects.data:
+            target_object: BoundingBox3D
+
+            col = int(target_object.cls[1])
+            target_objects_by_col[col].append(target_object)
+
+        # >>> STEP 2. Sort the target objects by row >>>
+        target_objects_sorted = {
+            0: [],
+            1: [],
+            2: [],
+            3: [],
+        }
+
+        for col in target_objects_by_col:
+            target_objects_sorted[col] = sorted(
+                target_objects_by_col[col], key=lambda x: ord(x.cls[0])
+            )
+
+        # >>> STEP 3. Get the random target object >>>
+
+        random_list = list(target_objects_sorted.keys())
+        random.shuffle(random_list)
+
+        random_target_object: BoundingBox3D = None
+        for random_col in random_list:
+            random_search_target_col = target_objects_sorted[random_col]
+
+            if len(random_search_target_col) > 0:
+                random_target_object = random_search_target_col[0]
+                return random_target_object
+
+        return random_target_object

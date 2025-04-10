@@ -23,6 +23,7 @@ setup(
     entry_points={
         "console_scripts": [
             "main = robot_control.main:main",
+            "integrated_joint_states_broadcaster = robot_control.integrated_joint_states_broadcaster:main",
         ],
     },
 )

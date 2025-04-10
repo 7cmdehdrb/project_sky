@@ -1,0 +1,29 @@
+moveit_setup_assistant_config:
+  urdf:
+    package: ur_description
+    relative_path: urdf/ur5e_with_gripper_joint_enabled.urdf
+  srdf:
+    relative_path: config/ur5e.srdf
+  package_settings:
+    author_name: IROL
+    author_email: wogns_1218@naver.com
+    generated_timestamp: 1744175983
+  control_xacro:
+    command:
+      - position
+      - velocity
+    state:
+      - position
+      - velocity
+      - effort
+  modified_urdf:
+    xacros:
+      - control_xacro
+  control_xacro:
+    command:
+      - position
+      - velocity
+    state:
+      - position
+      - velocity
+      - effort

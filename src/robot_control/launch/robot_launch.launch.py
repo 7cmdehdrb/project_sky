@@ -12,7 +12,9 @@ def generate_launch_description():
     ur_bringup_dir = os.path.join(
         FindPackageShare("ur_bringup").find("ur_bringup"), "launch"
     )
-    test_dir = os.path.join(FindPackageShare("test").find("test"), "launch")
+    ur_gripper_dir = os.path.join(
+        FindPackageShare("ur_gripper_enabled").find("ur_gripper_enabled"), "launch"
+    )
     robotiq_dir = os.path.join(
         FindPackageShare("robotiq_description").find("robotiq_description"), "launch"
     )
@@ -36,6 +38,13 @@ def generate_launch_description():
         output="screen",
     )
 
+    integrated_joint_states_broadcaster_node = Node(
+        package="robot_control",
+        executable="integrated_joint_states_broadcaster",
+        name="integrated_joint_states_broadcaster",
+        output="screen",
+    )
+
     return LaunchDescription(
         [
             # UR5e 제어 런치
@@ -52,12 +61,14 @@ def generate_launch_description():
             # move_group.launch.py
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
-                    os.path.join(test_dir, "move_group.launch.py")
+                    os.path.join(ur_gripper_dir, "move_group.launch.py")
                 )
             ),
             # rsp.launch.py
             IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(os.path.join(test_dir, "rsp.launch.py"))
+                PythonLaunchDescriptionSource(
+                    os.path.join(ur_gripper_dir, "rsp.launch.py")
+                )
             ),
             # robotiq_control.launch.py
             # IncludeLaunchDescription(
@@ -67,5 +78,6 @@ def generate_launch_description():
             #     launch_arguments={"launch_rviz": "false"}.items(),
             # ),
             static_tf_node,
+            integrated_joint_states_broadcaster_node,
         ]
     )

@@ -173,7 +173,7 @@ def generate_launch_description():
 
     nodes = [
         control_node,
-        robot_state_publisher_node,
+        # robot_state_publisher_node,
         joint_state_broadcaster_spawner,
         robotiq_gripper_controller_spawner,
         robotiq_activation_controller_spawner,

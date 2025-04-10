@@ -251,6 +251,12 @@ class RealTimeSegmentationNode(Node):
 def main(args=None):
     rclpy.init(args=args)
 
+    from rclpy.utilities import remove_ros_args
+    from base_package.header import str2bool
+
+    # Remove ROS2 arguments
+    argv = remove_ros_args(sys.argv)
+
     parser = argparse.ArgumentParser(description="FCN Server Node")
     parser.add_argument(
         "--model_file",
@@ -274,7 +280,7 @@ def main(args=None):
         help="Confidence threshold for object detection (default: 0.7)",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv[1:])
     kagrs = vars(args)
 
     node = RealTimeSegmentationNode(**kagrs)
