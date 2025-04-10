@@ -59,10 +59,10 @@ class DirectFCNServer(object):
             ],
             published_topics=[
                 {
-                    "topic_name": self._node.get_name() + "/processed_image",
+                    "topic_name": "/fcn_server/processed_image",
                 },
                 {
-                    "topic_name": self._node.get_name() + "/plot_image",
+                    "topic_name": "/fcn_server/plot_image",
                 },
             ],
             *args,
@@ -98,6 +98,9 @@ class DirectFCNServer(object):
         self._action = np.zeros((2, 1), dtype=np.float32)
         # <<< Data <<<
 
+        # >>> Returns >>>
+        self._fcn_result_data = np.array([0.0, 0.0, 0.0, 0.0])
+
         self._megapose_client = self._node.create_client(
             MegaposeRequest,
             "/megapose_request",
@@ -108,6 +111,10 @@ class DirectFCNServer(object):
             self._node.get_logger().info(
                 "/megapose_request service not available, waiting again..."
             )
+
+    @property
+    def fcn_result_data(self):
+        return self._fcn_result_data
 
     def run(self, target_id: int = 0):
         observation: np.ndarray = self.get_observation(target_id=target_id)
@@ -186,7 +193,11 @@ class DirectFCNServer(object):
         col3 = np.max(fcn_result[320:455])
         col4 = np.max(fcn_result[455:640])
 
-        return np.array([col1, col2, col3, col4])
+        result = np.array([col1, col2, col3, col4])
+
+        self._fcn_result_data = result
+
+        return result
 
     def _send_megapose_request(self) -> BoundingBox3DMultiArray:
         request = MegaposeRequest.Request()

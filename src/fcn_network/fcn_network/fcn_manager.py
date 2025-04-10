@@ -137,53 +137,71 @@ class FCNManager(Manager):
 
         return np_outputs
 
-    def post_process_results(self, results: np.ndarray, weights: list):
-        """
-        Input FCN results and weights, and return the target column and empty columns.
-        Returns:
-            [int: max_peak_idx, int[]: res(Available side columns), np.ndarray: data]
-        """
-
-        # results = np.clip(results, 0.0, 1.0)
-
-        normalized_results = results * np.exp(
-            -self._gain * (1 - results)
+    def get_1d_pdm(self, result: np.ndarray):
+        normalized_result = result * np.exp(
+            -self._gain * (1 - result)
         )  # 지수 함수로 가중치 적용
 
-        data = np.sum(normalized_results, axis=0)
+        data = np.sum(normalized_result, axis=0)
         if self._last_results_data is not None:
             data = data * self._gamma + (1 - self._gamma) * self._last_results_data
             self._last_results_data = data
 
-        num_peaks = len(weights)
+        return data
+
+    def apply_weights(self, data: np.ndarray, weights: list):
+        """
+        Apply weights to the data.
+        :param data: 1D array of data
+        :param weights: list of weights
+        :return: weighted data
+        """
+        if len(data) != len(weights):
+            raise ValueError("Data and weights must have the same length.")
+
+        weighted_data = data * np.array(weights)
+        return weighted_data
+
+    def post_process_results(self, results: np.ndarray, weights: list):
+        """
+        Input FCN results and weights, and return the target column and empty columns.
+        Returns:
+            one_d_pdm, res, top_peak_datas, top_peak_idx
+        """
+
+        num_peaks = 4
+        one_d_pdm = self.get_1d_pdm(results)
 
         # Find the top peaks and apply weights
-        top_peak_idx, top_peak_datas = self.find_top_peaks(
-            data, num_peaks=num_peaks, smooth_sigma=10, min_distance=10
-        )
-        if len(top_peak_idx) != 4:
-            raise ValueError(
-                f"Number of peaks found: {len(top_peak_idx)}. Expected: {num_peaks}."
-            )
+        max_peak_data = self.find_top_peaks_ginppai(one_d_pdm)
 
-        # Sort the top_peak_idx and top_peak_datas in ascending order of top_peak_idx
-        sorted_indices = np.argsort(top_peak_idx)
+        max_peak_data = self.apply_weights(max_peak_data, weights)
 
-        top_peak_idx = np.array(top_peak_idx)[sorted_indices]
-        top_peak_datas = np.array(top_peak_datas)[sorted_indices]
+        top_peak_idx = np.argmax(max_peak_data)
+        top_peak_datas = max_peak_data[top_peak_idx]
 
         top_peak_datas = top_peak_datas * weights
 
-        max_peak_idx = int(np.argmax(top_peak_datas))
-
         res = [
             idx
-            for idx in range(max_peak_idx - 1, max_peak_idx + 2)
-            if 0 <= idx < num_peaks and idx != max_peak_idx
+            for idx in range(top_peak_idx - 1, top_peak_idx + 2)
+            if 0 <= idx < num_peaks and idx != top_peak_idx
         ]
 
-        # target_col, empty_cols, post_processed_data
-        return max_peak_idx, res, top_peak_datas
+        return one_d_pdm, res, top_peak_datas, top_peak_idx
+
+    def find_top_peaks_ginppai(self, data_1d: np.ndarray) -> List[list, int]:
+        """
+        Returns the top 4 peaks and max peak index.
+        """
+        col1 = np.max(data_1d[:185])
+        col2 = np.max(data_1d[185:320])
+        col3 = np.max(data_1d[320:455])
+        col4 = np.max(data_1d[455:640])
+
+        result = [col1, col2, col3, col4]
+
+        return result
 
     def find_top_peaks(self, data, num_peaks=4, smooth_sigma=5, min_distance=10):
         """

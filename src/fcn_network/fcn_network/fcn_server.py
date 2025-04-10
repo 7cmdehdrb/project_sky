@@ -56,8 +56,8 @@ class FCNServerNode(Node):
             },
         ]
         image_publications = [
-            {"topic_name": self.get_name() + "/processed_image"},
-            {"topic_name": self.get_name() + "/plot_image"},
+            {"topic_name": "/fcn_server/processed_image"},
+            {"topic_name": "/fcn_server/plot_image"},
         ]
         self._image_manager = ImageManager(
             self,
@@ -73,10 +73,8 @@ class FCNServerNode(Node):
         self._srv = self.create_service(
             FCNRequest, "/fcn_request", self.fcn_request_callback
         )
-        self.test = self.create_publisher(
-            Image,
-            "/fcn_test",
-            qos_profile=qos_profile_system_default,
+        self._fcn_result_pub = self.create_publisher(
+            Float64MultiArray, "/fcn_server/fcn_result", qos_profile_system_default
         )
         # <<< ROS2 <<<
 
@@ -135,7 +133,8 @@ class FCNServerNode(Node):
             target_output = outputs[self._object_manager.indexs[request.target_cls]]
 
             # Publish the processed image
-            self.publish_output_image(image_output=target_output)
+            for _ in range(10):
+                self.publish_output_image(image_output=target_output)
 
             last_col: int = request.last_target_col
 
@@ -149,18 +148,23 @@ class FCNServerNode(Node):
             else:
                 self.get_logger().info(f"No last column, weight: {weights}")
 
-            target_col, empty_cols, top_peak_data = (
+            one_d_pdm, res, top_peak_datas, top_peak_idx = (
                 self._fcn_manager.post_process_results(target_output, weights)
             )
 
-            self.get_logger().info(f"Result: {top_peak_data}")
+            self.publish_result_image(processed_data=one_d_pdm, top_peak_idx=[])
+
+            for _ in range(10):
+                self._fcn_result_pub.publish(Float64MultiArray(data=top_peak_datas))
+
+            self.get_logger().info(f"Result: {top_peak_datas}")
 
             # Set the response
-            response.target_col = target_col
-            response.empty_cols = empty_cols
+            response.target_col = top_peak_idx
+            response.empty_cols = res
 
             self.get_logger().info(
-                f"Return response: target_col={target_col}, empty_cols={empty_cols}"
+                f"Return response: target_col={response.target_col}, empty_cols={response.empty_cols}"
             )
 
         except ValueError as ve:

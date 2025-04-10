@@ -56,6 +56,7 @@ from robot_control.control_manager import (
     DropGridManager,
     RandomSearchManager,
 )
+from robot_control.log_server import LogManager
 
 
 class State(Enum):
@@ -102,6 +103,12 @@ class MainControlNode(object):
         self._transform_manager = TransformManager(node=self._node, *args, **kwargs)
         self._joint_states_manager = JointStatesManager(
             node=self._node, *args, **kwargs
+        )
+
+        self._log_manager = LogManager(
+            node=self._node,
+            *args,
+            **kwargs,
         )
 
         drop_grid_manager_kwargs = dict(kwargs)
@@ -329,6 +336,7 @@ class MainControlNode(object):
         # <<< Unique Joint States <<<
 
         # >>> TEST >>>
+        self._step = 0
         self._target_z = 0.30
         self._is_finished = False
         self._planning_attempt = 0
@@ -373,6 +381,33 @@ class MainControlNode(object):
     def finished(self, header: Header):
         return True
 
+    def logging(self, header: Header):
+        fcn_data = (
+            self._fcn_direct_mananger.fcn_result_data if self._mode == 2 else None
+        )
+        action = -1
+
+        if not self._control_action.action:
+            action = 0
+
+        else:
+            target_col = int(self._control_action.target_id[1])
+            moving_col = int(self._control_action.goal_ids[0][1])
+
+            if target_col < moving_col:
+                action = 1
+            elif target_col > moving_col:
+                action = 2
+        # 0: Grasp, 1: Sweep Right 2: Sweep Left
+
+        is_success = self._log_manager.log(
+            fcn_data=fcn_data,
+            action=action,
+            column=int(self._control_action.target_id[1]),
+            step=self._step,
+        )
+        return is_success
+
     # >>> LEVEL 0 >>>
     def action_selecting(self, header: Header):
         # CASE 0. Before action selecting
@@ -404,6 +439,8 @@ class MainControlNode(object):
             elif self._state == State.SWEEPING_HOMING2:
                 self._state = State.FCN_POSITIONING
                 self._control_action = None
+                self.logging(header=header)
+                self._step += 1
 
             else:
                 self._state = State(self._state.value + 1)
@@ -416,6 +453,8 @@ class MainControlNode(object):
             elif self._state == State.GARSPING_DROP_POSITIONING2:
                 self._state = State.FCN_POSITIONING
                 self._control_action = None
+                self.logging(header=header)
+                self._step += 1
 
             else:
                 self._state = State(self._state.value + 1)
