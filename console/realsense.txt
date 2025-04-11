@@ -9,9 +9,15 @@ ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" rgb_camera.col
 pointcloud.enable:=true enable_gyro:=true enable_accel:=true
 
 
-ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.enable:=true rgb_camera.color_profile:="1280,720,30" depth_module.depth_profile:="1280,720,30" rgb_camera.enable_auto_exposure:=false rgb_camera.exposure:="100"
+ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.enable:=true rgb_camera.color_profile:="1280,720,30" depth_module.depth_profile:="1280,720,30" rgb_camera.enable_auto_exposure:=false rgb_camera.exposure:="100" usb_port_id:="6-3.3"
 
 
+ros2 launch realsense2_camera rs_launch.py camera_name:="camera2" rgb_camera.color_profile:="1280,720,30" rgb_camera.enable_auto_exposure:=true usb_port_id:="6-3.1"
+ 
+/sys/devices/pci0000:00/0000:00:08.1/0000:0c:00.3/usb6/6-3/6-3.1/6-3.1:1.0/video4linux/video8
+
+/sys/devices/pci0000:00/0000:00:08.1/0000:0c:00.3/usb6/6-3/6-3.1/6-3.1:1.0/video4linux/video8
+/sys/devices/pci0000:00/0000:00:08.1/0000:0c:00.3/usb6/6-3/6-3.3/6-3.3:1.0/video4linux/video0
 
 ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.enable:=true rgb_camera.enable_auto_exposure:=false rgb_camera.exposure:="100"
 

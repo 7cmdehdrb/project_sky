@@ -199,6 +199,8 @@ class PointCloudGridIdentifier(Node):
             text_marker = grid.get_text_marker(header)
             marker_array.markers.append(text_marker)
 
+        self.get_logger().info(f"Grid marker: {len(marker_array.markers)}")
+
         self._grid_marker_publisher.publish(marker_array)
 
 

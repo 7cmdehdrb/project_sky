@@ -1,5 +1,5 @@
 {
-    "rows": ["A", "B", "C"],
+    "rows": ["A", "B", "C", "D"],
     "columns": [0, 1, 2],
     "grid_identifier": {
         "grid_size": {
@@ -8,7 +8,7 @@
             "z": 0.01
         },
         "start_center_coord": {
-            "x": 0.30,
+            "x": 0.20,
             "y": 0.93,
             "z": -0.46
         },

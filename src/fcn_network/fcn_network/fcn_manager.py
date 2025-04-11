@@ -178,9 +178,6 @@ class FCNManager(Manager):
         max_peak_data = self.apply_weights(max_peak_data, weights)
 
         top_peak_idx = np.argmax(max_peak_data)
-        top_peak_datas = max_peak_data[top_peak_idx]
-
-        top_peak_datas = top_peak_datas * weights
 
         res = [
             idx
@@ -188,9 +185,9 @@ class FCNManager(Manager):
             if 0 <= idx < num_peaks and idx != top_peak_idx
         ]
 
-        return one_d_pdm, res, top_peak_datas, top_peak_idx
+        return one_d_pdm, res, max_peak_data, top_peak_idx
 
-    def find_top_peaks_ginppai(self, data_1d: np.ndarray) -> List[list, int]:
+    def find_top_peaks_ginppai(self, data_1d: np.ndarray):
         """
         Returns the top 4 peaks and max peak index.
         """

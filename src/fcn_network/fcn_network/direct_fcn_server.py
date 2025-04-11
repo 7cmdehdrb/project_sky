@@ -116,12 +116,24 @@ class DirectFCNServer(object):
     def fcn_result_data(self):
         return self._fcn_result_data
 
+    def reset(self):
+        self._image: Image = None
+        self._target_objects: BoundingBox3DMultiArray = None
+        self._fcn_result: np.ndarray = np.empty(640)
+        self._action_policy: np.ndarray = np.array([0], dtype=np.int16)
+        self._action_column: np.ndarray = np.array([0], dtype=np.int16)  # np.zeros(1)
+        self._action = np.zeros((2, 1), dtype=np.float32)
+
     def run(self, target_id: int = 0):
+        self._target_objects = None
         observation: np.ndarray = self.get_observation(target_id=target_id)
         observation = np.expand_dims(observation, axis=0)
 
         if observation[0] is not None:
             try:
+                if self._target_objects is None:
+                    raise ValueError("Target objects is None")
+
                 self._action = self.model_ort.run(["actions"], {"obs": observation})[0]
 
                 self._action_policy = np.array(self._action[:, 0], dtype=np.int32)
@@ -135,6 +147,9 @@ class DirectFCNServer(object):
 
                 # Define target column
                 target_col = self._action_column[0]
+
+                self._node.get_logger().info(f"Target Column: {target_col}")
+
                 target_row: str = "Z"
 
                 for object in self._target_objects.data:
@@ -145,6 +160,7 @@ class DirectFCNServer(object):
                             target_row = row
 
                 if target_row == "Z":
+                    self.reset()
                     raise ValueError("Target row is None")
 
                 target_id = f"{target_row}{self._action_column[0]}"
@@ -155,22 +171,12 @@ class DirectFCNServer(object):
 
                 moving_id = f"{moving_row}{moving_col}"
 
-                target_object: BoundingBox3D = None
-                for object in self._target_objects.data:
-                    object: BoundingBox3D
-                    if object.cls == target_id:
-                        target_object = object
-                        break
-
-                if target_object is None:
-                    raise ValueError("Target object is None")
-
                 # 0 g 1 sr 2 sl
                 response = ControlAction(
                     action=action != 0,
                     target_id=target_id,
                     goal_ids=[moving_id] if action != 0 else [],
-                    target_object=target_object,
+                    target_object=None,
                 )
 
                 return response
@@ -193,7 +199,7 @@ class DirectFCNServer(object):
         col3 = np.max(fcn_result[320:455])
         col4 = np.max(fcn_result[455:640])
 
-        result = np.array([col1, col2, col3, col4])
+        result = np.array([col1, col2, col3, col4], dtype=np.float32)
 
         self._fcn_result_data = result
 
@@ -221,7 +227,8 @@ class DirectFCNServer(object):
         fcn_raw_result: np.ndarray = self._fcn_manager.predict(np_image=np_image)
         fcn_target_raw_result: np.ndarray = fcn_raw_result[target_id]
 
-        self.publish_output_image(image_output=fcn_target_raw_result)
+        for _ in range(30):
+            self.publish_output_image(image_output=fcn_target_raw_result)
 
         normalized_results = fcn_target_raw_result * np.exp(
             -self._gain * (1 - fcn_target_raw_result)
@@ -236,7 +243,8 @@ class DirectFCNServer(object):
                 fcn_1d_result * self._gamma + (1 - self._gamma) * self._fcn_result
             )
 
-        self.publish_result_image(processed_data=fcn_1d_result, top_peak_idx=[])
+        for _ in range(30):
+            self.publish_result_image(processed_data=fcn_1d_result, top_peak_idx=[])
 
         column_distribution = self._post_process_fcn_result(self._fcn_result)
         return column_distribution
@@ -343,7 +351,7 @@ class DirectFCNServer(object):
             target_output_normalized, encoding="mono8"
         )
 
-        self._image_manager.publish(self._node.get_name() + "/processed_image", msg)
+        self._image_manager.publish("/fcn_server/processed_image", msg)
 
     def publish_result_image(self, processed_data: np.ndarray, top_peak_idx: List[int]):
         """
@@ -365,9 +373,7 @@ class DirectFCNServer(object):
         plot_image = plot_image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
 
         plot_image_msg = self._image_manager.encode_message(plot_image, encoding="rgb8")
-        self._image_manager.publish(
-            self._node.get_name() + "/plot_image", plot_image_msg
-        )
+        self._image_manager.publish("/fcn_server/plot_image", plot_image_msg)
 
         plt.close(fig)
 

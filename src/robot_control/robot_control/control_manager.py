@@ -603,7 +603,7 @@ class ApplyPlanningScene_ServiceManager(ServiceManager):
                     orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
                 ),
                 # scale=Vector3(x=0.8, y=0.44, z=10.0),
-                scale=Vector3(x=0.8, y=0.44, z=0.52),  # 54
+                scale=Vector3(x=0.8, y=0.44, z=0.48),  # 54
             )
         )
         idx += 1

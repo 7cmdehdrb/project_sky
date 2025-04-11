@@ -152,7 +152,8 @@ class FCNServerNode(Node):
                 self._fcn_manager.post_process_results(target_output, weights)
             )
 
-            self.publish_result_image(processed_data=one_d_pdm, top_peak_idx=[])
+            for _ in range(10):
+                self.publish_result_image(processed_data=one_d_pdm, top_peak_idx=[])
 
             for _ in range(10):
                 self._fcn_result_pub.publish(Float64MultiArray(data=top_peak_datas))
@@ -160,7 +161,7 @@ class FCNServerNode(Node):
             self.get_logger().info(f"Result: {top_peak_datas}")
 
             # Set the response
-            response.target_col = top_peak_idx
+            response.target_col = int(top_peak_idx)
             response.empty_cols = res
 
             self.get_logger().info(
@@ -192,7 +193,7 @@ class FCNServerNode(Node):
         msg = self._image_manager.encode_message(
             target_output_normalized, encoding="mono8"
         )
-        self._image_manager.publish(self.get_name() + "/processed_image", msg)
+        self._image_manager.publish("/fcn_server/processed_image", msg)
 
     def publish_result_image(self, processed_data: np.ndarray, top_peak_idx: List[int]):
         """
@@ -214,7 +215,7 @@ class FCNServerNode(Node):
         plot_image = plot_image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
 
         plot_image_msg = self._image_manager.encode_message(plot_image, encoding="rgb8")
-        self._image_manager.publish(self.get_name() + "/plot_image", plot_image_msg)
+        self._image_manager.publish("/fcn_server/plot_image", plot_image_msg)
 
         plt.close(fig)
 

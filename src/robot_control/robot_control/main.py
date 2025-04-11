@@ -383,7 +383,9 @@ class MainControlNode(object):
 
     def logging(self, header: Header):
         fcn_data = (
-            self._fcn_direct_mananger.fcn_result_data if self._mode == 2 else None
+            self._fcn_direct_mananger.fcn_result_data.tolist()
+            if self._mode == 2
+            else None
         )
         action = -1
 
@@ -392,7 +394,7 @@ class MainControlNode(object):
 
         else:
             target_col = int(self._control_action.target_id[1])
-            moving_col = int(self._control_action.goal_ids[0][1])
+            moving_col = int(self._control_action.goal_ids[-1][1])
 
             if target_col < moving_col:
                 action = 1
@@ -438,8 +440,8 @@ class MainControlNode(object):
 
             elif self._state == State.SWEEPING_HOMING2:
                 self._state = State.FCN_POSITIONING
-                self._control_action = None
                 self.logging(header=header)
+                self._control_action = None
                 self._step += 1
 
             else:
@@ -452,8 +454,8 @@ class MainControlNode(object):
 
             elif self._state == State.GARSPING_DROP_POSITIONING2:
                 self._state = State.FCN_POSITIONING
-                self._control_action = None
                 self.logging(header=header)
+                self._control_action = None
                 self._step += 1
 
             else:
@@ -608,8 +610,8 @@ class MainControlNode(object):
 
                     is_applying_success = self._apply_planning_scene_service_manager.add_collistion_objects(
                         collision_objects=(
-                            collision_objects
-                            + self._drop_grid_manager.collision_objects
+                            # collision_objects
+                            self._drop_grid_manager.collision_objects
                             + default_collision_objects
                         ),
                         scene=current_scene,
@@ -681,22 +683,22 @@ class MainControlNode(object):
                 target_id=target_id
             )
 
-            # target_object: BoundingBox3D = (
-            #     self._object_selection_manager.get_target_object_with_grid_id(
-            #         target_objects=self._target_objects,
-            #         grid_id=control_action.target_id,
-            #     )
-            # )
+            target_object: BoundingBox3D = (
+                self._object_selection_manager.get_target_object_with_grid_id(
+                    target_objects=self._target_objects,
+                    grid_id=control_action.target_id,
+                )
+            )
 
-            # new_control_action = ControlAction(
-            #     target_id=control_action.target_id,
-            #     goal_ids=control_action.goal_ids,
-            #     action=control_action.action,
-            #     target_object=target_object,
-            # )
+            new_control_action = ControlAction(
+                target_id=control_action.target_id,
+                goal_ids=control_action.goal_ids,
+                action=control_action.action,
+                target_object=target_object,
+            )
 
             if control_action is not None:
-                self._control_action = control_action
+                self._control_action = new_control_action
 
                 action_str = "Sweep" if self._control_action.action else "Grasp"
 
@@ -876,6 +878,8 @@ class MainControlNode(object):
             #     scale_factor=1.0,
             #     use_path_contraint=None,
             # )
+
+            print(target_pose)
 
             control_success = self.control(
                 header=header,
@@ -1251,12 +1255,8 @@ class MainControlNode(object):
 
             target_col = int(self._control_action.target_id[1])  # e.g. 'A1' -> 1
 
-            if self._planning_attempt // 2 == 0:
-                moving_col = max(
-                    [int(id[1]) for id in self._control_action.goal_ids]
-                )  # e.g. ['A0', 'A2'] -> [0, 2]
-            else:
-                moving_col = min([int(id[1]) for id in self._control_action.goal_ids])
+            moving_grid_id = self._control_action.goal_ids[-1]
+            moving_col = int(moving_grid_id[1])  # e.g. 'A2' -> 2
 
             direction = target_col < moving_col  # True for right, False for left
 
@@ -1267,11 +1267,13 @@ class MainControlNode(object):
             target_pose = Pose(
                 position=Point(
                     x=target_pose.position.x + offset,
-                    y=self._home_pose.pose.position.y + 0.03,
-                    z=target_pose.position.z,
+                    y=self._home_pose.pose.position.y + 0.04,
+                    z=self._target_z + 0.05,
                 ),
                 orientation=self._home_pose.pose.orientation,
             )
+
+            self._target_pose_pub.publish(PoseStamped(header=header, pose=target_pose))
 
             control_success = self.control(
                 header=header,
@@ -1281,8 +1283,6 @@ class MainControlNode(object):
                 scale_factor=1.0,
                 use_path_contraint=False,
             )
-
-            self._target_pose_pub.publish(PoseStamped(header=header, pose=target_pose))
 
             if control_success:
                 # self.action_selecting(header=header)
@@ -1310,12 +1310,15 @@ class MainControlNode(object):
 
             target_col = int(self._control_action.target_id[1])  # e.g. 'A1' -> 1
 
-            if self._planning_attempt // 2 == 0:
-                moving_col = max(
-                    [int(id[1]) for id in self._control_action.goal_ids]
-                )  # e.g. ['A0', 'A2'] -> [0, 2]
-            else:
-                moving_col = min([int(id[1]) for id in self._control_action.goal_ids])
+            moving_grid_id = self._control_action.goal_ids[-1]
+            moving_col = int(moving_grid_id[1])  # e.g. 'A2' -> 2
+
+            # if self._planning_attempt // 2 == 0:
+            #     moving_col = max(
+            #         [int(id[1]) for id in self._control_action.goal_ids]
+            #     )  # e.g. ['A0', 'A2'] -> [0, 2]
+            # else:
+            #     moving_col = min([int(id[1]) for id in self._control_action.goal_ids])
 
             direction = target_col < moving_col  # True for right, False for left
 
@@ -1327,10 +1330,12 @@ class MainControlNode(object):
                 position=Point(
                     x=target_pose.position.x + offset,
                     y=target_pose.position.y - 0.1,
-                    z=target_pose.position.z,
+                    z=self._target_z + 0.05,
                 ),
                 orientation=self._home_pose.pose.orientation,
             )
+
+            self._target_pose_pub.publish(PoseStamped(header=header, pose=target_pose))
 
             control_success = self.control(
                 header=header,
@@ -1340,8 +1345,6 @@ class MainControlNode(object):
                 scale_factor=1.0,
                 use_path_contraint=False,
             )
-
-            self._target_pose_pub.publish(PoseStamped(header=header, pose=target_pose))
 
             if control_success:
                 # self.action_selecting(header=header)
@@ -1387,6 +1390,8 @@ class MainControlNode(object):
                 ),
             )
 
+            self._target_pose_pub.publish(PoseStamped(header=header, pose=target_pose))
+
             control_success = self.control(
                 header=header,
                 target_pose=target_pose,
@@ -1395,8 +1400,6 @@ class MainControlNode(object):
                 scale_factor=1.0,
                 use_path_contraint=False,
             )
-
-            self._target_pose_pub.publish(PoseStamped(header=header, pose=target_pose))
 
             if control_success:
                 # self.action_selecting(header=header)
@@ -1438,7 +1441,7 @@ class MainControlNode(object):
                     direction = (
                         target_row < moving_rows
                     )  # True for right, False for left
-                    sweep_offset = 0.04 if direction else -0.04
+                    sweep_offset = -0.05  # if direction else -0.05
                     sweep_distance = (
                         self._object_selection_manager.get_grid_data()[
                             "grid_identifier"
@@ -1447,6 +1450,8 @@ class MainControlNode(object):
                     )
 
                     offset = sweep_distance if direction else -sweep_distance
+
+                    self._node.get_logger().info(f"Sweep Offset: {offset}")
 
                     target_pose = Pose(
                         position=Point(
@@ -1707,7 +1712,7 @@ def main():
         type=int,
         required=True,
         default=0,
-        help="0: FCN(Grasp only) 1: FCN, 2: FCN Direct, 3: Random",
+        help="0: FCN(Grasp only) -> grasp only model 1: FCN -> 0408 model, 2: DRL -> 0408, 3: Random",
     )
 
     parser.add_argument(

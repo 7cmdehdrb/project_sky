@@ -84,22 +84,27 @@ class LogServerNode(Node):
     def __init__(self, *arg, **kwargs):
         super().__init__("log_server_node")
 
+        self._attempt = kwargs.get("exp_attempt", -1)
+
         # >>> Managers >>>
 
         # >>> Subscriptions >>>
         self._plot_image: Image = None
         self._processed_image: Image = None
 
-        self._root_dir = (
-            "/home/min/7cmdehdrb/ros2_ws/src/robot_control/resource/exp_result"
-        )
+        self._root_dir = f"/home/irol/workspace/project_sky/src/robot_control/resource/exp_result/{self._attempt}"
         self._image_dir = os.path.join(self._root_dir, "images")
-
-        if not os.path.exists(self._image_dir):
-            os.makedirs(self._image_dir)
 
         if not os.path.exists(self._root_dir):
             os.makedirs(self._root_dir)
+
+        else:
+            raise RuntimeError(
+                f"Experiment attempt {self._attempt} already exists. Please use a different attempt number."
+            )
+
+        if not os.path.exists(self._image_dir):
+            os.makedirs(self._image_dir)
 
         image_subscriptions = [
             {
@@ -131,35 +136,49 @@ class LogServerNode(Node):
 
     # >>> Callbacks >>>
     def log_callback(self, request: LogRequest.Request, response: LogRequest.Response):
-        if self._processed_image is None or self._plot_image is None:
-            self.get_logger().warn(
-                "Log callback called, but images are not available yet."
-            )
-
         fcn_data = request.fcn_data
         action = request.action
         column = request.column
         step = request.step
 
-        pdm_2d_np = self._image_manager.decode_message(self._processed_image)
-        pdm_1d_np = self._image_manager.decode_message(self._plot_image)
+        try:
+            pdm_2d_np = self._image_manager.decode_message(
+                self._processed_image, desired_encoding="rgb8"
+            )
+            pdm_1d_np = self._image_manager.decode_message(
+                self._plot_image, desired_encoding="rgb8"
+            )
 
-        pdm_2d_filename = f"pdm_2d_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-        cv2.imwrite(os.path.join(self._image_dir, pdm_2d_filename), pdm_2d_np)
+            pdm_2d_filename = f"pdm_2d_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            cv2.imwrite(os.path.join(self._image_dir, pdm_2d_filename), pdm_2d_np)
+            self.get_logger().info(f"Saved 2D PDM image: {pdm_2d_filename}")
 
-        pdm_1d_filename = f"pdm_1d_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-        cv2.imwrite(os.path.join(self._image_dir, pdm_1d_filename), pdm_1d_np)
+            pdm_1d_filename = f"pdm_1d_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            cv2.imwrite(os.path.join(self._image_dir, pdm_1d_filename), pdm_1d_np)
+            self.get_logger().info(f"Saved 1D PDM image: {pdm_1d_filename}")
 
-        step_data = {
-            "2d_pdm": pdm_2d_filename,
-            "1d_pdm": pdm_1d_filename,
-            "fcn_data": fcn_data,
-            "action": action,
-            "column": column,
-            "step": step,
-        }
+        except Exception as e:
+            self.get_logger().error(f"Error: {e}")
+            pdm_2d_filename = "None"
+            pdm_1d_filename = "None"
 
-        self._data.append(step_data)
+        finally:
+            step_data = {
+                "2d_pdm": pdm_2d_filename,
+                "1d_pdm": pdm_1d_filename,
+                "fcn_data": fcn_data.tolist(),
+                "action": action,
+                "column": column,
+                "step": step,
+            }
+
+            self._data.append(step_data)
+
+            self._plot_image = None
+            self._processed_image = None
+
+            response.success = True
+            return response
 
     def fcn_processed_image_callback(self, msg):
         self._processed_image = msg
@@ -179,15 +198,41 @@ class LogServerNode(Node):
 def main():
     rclpy.init(args=None)
 
-    node = LogServerNode()
+    import argparse
+    from rclpy.utilities import remove_ros_args
+    from base_package.header import str2bool
 
-    rclpy.spin(node)
+    # Remove ROS2 arguments
+    argv = remove_ros_args(sys.argv)
 
-    node.export_data()
+    parser = argparse.ArgumentParser(description="FCN Server Node")
 
-    node.destroy_node()
-    rclpy.shutdown()
+    parser.add_argument(
+        "--exp_attempt",
+        type=int,
+        required=True,
+    )
+
+    args = parser.parse_args(argv[1:])
+    kagrs = vars(args)
+
+    node = LogServerNode(**kagrs)
+
+    try:
+        rclpy.spin(node)
+
+        node.destroy_node()
+        rclpy.shutdown()
+
+    except KeyboardInterrupt:
+        node.get_logger().info("Keyboard interrupt, shutting down...")
+        node.export_data()
+    finally:
+        node.get_logger().info("Node destroyed and shutdown complete.")
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == "__main__":
+
     main()

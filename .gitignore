@@ -295,6 +295,7 @@ AMENT_IGNORE
 *.blend
 *.gltf
 *.glb
+*.mp4
 
 # Ignore files larger than 50MB
 *.[5-9][0-9]M
