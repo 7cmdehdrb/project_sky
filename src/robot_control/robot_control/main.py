@@ -1712,7 +1712,7 @@ def main():
         type=int,
         required=True,
         default=0,
-        help="0: FCN(Grasp only) -> grasp only model 1: FCN -> 0408 model, 2: DRL -> 0408, 3: Random",
+        help="0: FCN(Grasp only) -> grasp only model 1: FCN(Rule-base) -> 0408 model, 2: DRL -> 0408, 3: Random",
     )
 
     parser.add_argument(

@@ -98,6 +98,18 @@ class LogServerNode(Node):
         if not os.path.exists(self._root_dir):
             os.makedirs(self._root_dir)
 
+        elif self._attempt == -1:
+            if os.path.exists(self._root_dir):
+                self.get_logger().warn(
+                    f"Attempt number set to test mode, data will overwrite the existing data in {self._root_dir} and original data will be lost."
+                )
+                for filename in os.listdir(self._root_dir):
+                    if filename == "images":
+                        for img in os.listdir(os.path.join(self._root_dir, filename)):
+                            os.remove(os.path.join(self._root_dir, filename, img))
+                    else:
+                        os.remove(os.path.join(self._root_dir, filename))
+
         else:
             raise RuntimeError(
                 f"Experiment attempt {self._attempt} already exists. Please use a different attempt number."

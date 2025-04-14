@@ -100,3 +100,71 @@ This setup installs dependencies, builds the `visp` workspace, and runs the `meg
 
 This README provides an overview of the project's structure and functionalities. For further details, refer to the corresponding package documentation.
 
+
+
+FUCKING TEST
+
+1. Launch UR5e
+
+```bash
+ros2 launch robot_control robot_launch.launch.py 
+```
+
+2. Launch Gripper
+
+```bash
+ros2 launch robotiq_description robotiq_control.launch.py launch_rviz:=false
+```
+
+3. Launch Main Camera
+
+```bash
+ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.enable:=true rgb_camera color_profile:="1280,720,30" depth_module.depth_profile:="1280,720,30" rgb_camera enable_auto_exposure:=false rgb_camera.exposure:="100" usb_port_id:="6-3.3"
+```
+4. Launch Side Camera
+
+```bash
+ros2 launch realsense2_camera rs_launch.py camera_name:="camera2" rgb_camera.color_profile:="1280,720,30" rgb_camera.enable_auto_exposure:=true usb_port_id:="6-3.1"
+```
+
+5. Run Action Camera
+
+```bash
+python3 /home/irol/workspace/project_sky/src/base_package/base_package/unused/video_to_ros.py --topic /action_camera/color/image_raw --video /dev/video6
+```
+
+6. Launch FCM
+
+```bash
+ros2 launch fcn_network fcn_network.launch.py model_file:=/home/irol/workspace/project_sky/src/fcn_network/resource/best_model_0414_grasping_only.pth grid_data_file:=/home/irol/workspace/project_sky/src/fcn_network/resource/grid_data.json fcn_gamma:=1.0
+```
+
+- If you use DRL,
+
+```bash
+ros2 launch fcn_network direct_fcn_network.launch.py model_file:=/home/irol/workspace/project_sky/src/fcn_network/resource/best_model_0414_grasping_only.pth grid_data_file:=/home/irol/workspace/project_sky/src/fcn_network/resource/grid_data.json fcn_gamma:=1.0
+```
+
+7. Launch Object Tracker
+
+```bash
+ros2 launch object_tracker object_tracker.launch.py model_file:=/home/irol/workspace/project_sky/src/object_tracker/resource/best_hg.pt grid_data_file:=/home/irol/workspace/project_sky/src/fcn_network/resource/grid_data.json obj_bounds_file:=/home/irol/workspace/project_sky/src/object_tracker/resource/obj_bounds.json
+```
+
+8. Launch Log Server
+
+```bash
+python3 /home/irol/workspace/project_sky/src/robot_control/robot_control/log_server.py --exp_attempt <YOUR-EXPERIMENT-NUMBER>
+```
+
+9. Launch Video Record
+
+```bash
+python3 /home/irol/workspace/project_sky/src/base_package/base_package/unused/video_recoder.py --record <TRUE-IF-YOU-WANT-TO-RECORD> --exp_attempt <YOUR-EXPERIMENT-NUMBER>
+```
+
+10. RUN MAIN CODE
+
+```bash
+python3 /home/irol/workspace/project_sky/src/robot_control/robot_control/main.py --model_file /home/irol/workspace/project_sky/src/fcn_network/resource/best_model_0414_grasping_only.pth --grid_data_file /home/irol/workspace/project_sky/src/fcn_network/resource/grid_data.json --drop_grid_data_file /home/irol/workspace/project_sky/src/fcn_network/resource/drop_grid_data.json --debug false --mode <MODE-TO-RUN> --target_cls <TARGET-CLASS-NAME> 
+```
