@@ -1,0 +1,7 @@
+# GetFCNResult.srv
+float32[] weight
+int32 target_class_idx
+
+---
+
+float32[] data

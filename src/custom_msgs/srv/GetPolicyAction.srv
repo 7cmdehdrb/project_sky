@@ -1,0 +1,4 @@
+int32 target_id
+---
+int32 action_type
+int32 target_column

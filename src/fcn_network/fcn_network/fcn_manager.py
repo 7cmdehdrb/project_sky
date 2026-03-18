@@ -1,631 +1,245 @@
-# ROS2
+import os
 import rclpy
 from rclpy.node import Node
-from rclpy.time import Time
-from rclpy.duration import Duration
-from rclpy.qos import QoSProfile, qos_profile_system_default
-
-# ROS2 Messages
-from std_msgs.msg import *
-from geometry_msgs.msg import *
-from sensor_msgs.msg import *
-from nav_msgs.msg import *
-from visualization_msgs.msg import *
-from custom_msgs.srv import FCNRequest, FCNOccupiedRequest, FCNIntegratedRequest
-
-# ROS2 TF
-from tf2_ros import *
-
-# Python Standard Libraries
-import os
-import sys
-import json
-from enum import Enum
-import argparse
-
-# Third-party Libraries
-import numpy as np
-import cv2
-import cv_bridge
-from PIL import Image as PILImage
-from matplotlib import pyplot as plt
-from scipy.signal import find_peaks
-from scipy.ndimage import gaussian_filter1d
-
-# PyTorch
 import torch
-from torch import nn, Tensor
-from torchvision.transforms import Normalize
+import torch.nn as nn
+import numpy as np
+from torch import Tensor
 from torchvision.models.segmentation import fcn_resnet50
+from torchvision.transforms import Normalize
+from scipy.ndimage import gaussian_filter1d
+from scipy.signal import find_peaks
 
-# Custom Modules
-from base_package.header import PointCloudTransformer, QuaternionAngle
-from base_package.manager import Manager, ImageManager, ObjectManager
-from object_tracker.real_time_segmentation import RealTimeSegmentationNode
+# ROS 2 모듈 (환경에 맞춰 유지)
 from ament_index_python.packages import get_package_share_directory
 
+# from your_custom_module import Manager, Node (이 부분은 기존 코드에 맞춰서 사용하세요)
+from typing import Tuple
 
-# FCNModel class
+
 class FCNModel(nn.Module):
+    """
+    ResNet50 기반의 Fully Convolutional Network (FCN) 모델.
+    12개의 클래스(채널)를 출력하도록 마지막 분류기(classifier)가 수정되었습니다.
+    """
+
     def __init__(self):
         super(FCNModel, self).__init__()
-        self.model = fcn_resnet50(
-            weights=None
-        )  # pretrained=False는 weights=None으로 대체됨
+        # Pretrained 가중치 없이 기본 모델 뼈대 생성
+        self.model = fcn_resnet50(weights=None)
+
+        # 출력 채널 수를 12개로 맞추기 위해 1x1 합성곱 레이어 수정
         self.model.classifier[4] = nn.Conv2d(512, 12, kernel_size=1)
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
+        # FCN 출력 중 메인 결과인 'out' 텐서만 반환
         return self.model(x)["out"]
 
 
-class FCNManager(Manager):
-    def __init__(self, node: Node, *args, **kwargs):
-        super().__init__(node, *args, **kwargs)
+class FCNManager:
+    """
+    FCN 모델의 로드, 이미지 전처리, 추론, 후처리를 총괄하는 매니저 클래스.
+    """
 
+    def __init__(
+        self,
+        node: Node,
+        fcn_gain: float,
+        fcn_gamma: float,
+        model_path: str,
+        fcn_image_transform: bool = True,
+    ):
+        self._node: Node = node
+
+        self._device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self._last_results_data: np.ndarray = None
 
-        # >>> Initialize the FCN Model >>>
-        self._model = FCNModel()
-        self._device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        # <<< Initialize the FCN Model <<<
+        # >>> 1. 파라미터 및 변환기(Transformer) 초기화 >>>
+        self._do_transform = fcn_image_transform
+        self._gain = fcn_gain
+        self._gamma = fcn_gamma
 
-        # >>> Load Files >>>
-        fcn_package_path = get_package_share_directory("fcn_network")
-
-        resource_path = os.path.join(
-            fcn_package_path, "../ament_index/resource_index/packages"
-        )
-
-        model_path = kwargs["model_file"]
-        if not os.path.isfile(model_path):
-            model_path = os.path.join(resource_path, model_path)
-
-        # <<< Load Files <<<
-
-        # >>> FCN Parameters >>>
-        self._do_transform = kwargs["fcn_image_transform"]
-        self._gain = kwargs["fcn_gain"]
-        self._gamma = kwargs["fcn_gamma"]
         self._transformer = Normalize(
             mean=[0.6501676617516412, 0.6430160918638441, 0.6165616299396091],
             std=[0.16873769158467197, 0.17505241356408263, 0.1989546266815883],
         )
-        self._state_dict: dict = torch.load(
-            model_path,
-            map_location=self._device,
+
+        # 긴빠이(ginppai) 로직에 사용될 X축 구간 분할 기준 인덱스 (기본값)
+        self._peak_boundaries = [0, 185, 320, 455, 640]
+        # <<< 1. 파라미터 및 변환기(Transformer) 초기화 <<<
+
+        # >>> 2. 가중치 파일 탐색 및 모델 셋업 >>>
+        self._model = self._setup_model(model_path)
+        # <<< 2. 가중치 파일 탐색 및 모델 셋업 <<<
+
+    def _setup_model(self, model_path: str) -> FCNModel:
+        """가중치를 로드하고 필터링한 뒤, 모델을 평가 모드(eval)로 설정합니다."""
+        model = FCNModel()
+        state_dict: dict[str, torch.Tensor] = torch.load(
+            model_path, map_location=self._device
         )
-        self._filtered_state_dict = {
-            k: v for k, v in self._state_dict.items() if "aux_classifier" not in k
+
+        # 보조 분류기(aux_classifier) 가중치 제외
+        filtered_state_dict = {
+            k: v for k, v in state_dict.items() if "aux_classifier" not in k
         }
-        # <<< FCN Model Parameters <<<
 
-        # >>> Initialize the FCN Model
-        self._model.eval()
-        self._model.load_state_dict(self._filtered_state_dict, strict=False)
-        self._model = self._model.to(self._device)
-        # <<< Initialize the FCN Model
+        model.eval()
+        model.load_state_dict(filtered_state_dict, strict=False)
+        return model.to(self._device)
 
-    def post_process_raw_image(self, img: np.ndarray) -> Tensor:
+    # ==========================================================
+    # 추가 요구사항 2: find_top_peaks_ginppai 인덱스 Setter / Getter
+    # ==========================================================
+    @property
+    def peak_boundaries(self) -> list:
+        """현재 설정된 X축 분할 구간 인덱스 리스트를 반환합니다."""
+        return self._peak_boundaries
+
+    @peak_boundaries.setter
+    def peak_boundaries(self, boundaries: list):
+        """
+        가변적인 구역을 나누기 위한 경계 인덱스를 설정합니다.
+        길이는 2 이상이어야 하며 오름차순이어야 합니다.
+        """
+        if len(boundaries) < 2:
+            raise ValueError(
+                "경계 인덱스는 최소 2개 이상의 요소(시작점과 끝점)로 구성되어야 합니다."
+            )
+        if boundaries != sorted(boundaries):
+            raise ValueError("경계 인덱스는 오름차순으로 정렬되어 있어야 합니다.")
+
+        self._peak_boundaries = boundaries
+
+    # ==========================================================
+
+    def preprocess_image(self, img: np.ndarray) -> Tensor:
+        """
+        (기존 post_process_raw_image 역할)
+        원시 이미지를 모델이 요구하는 텐서 형태로 전처리합니다.
+        """
+        # 채널 수를 3채널(RGB)로 통일
         if img.ndim == 2:
             img = np.stack([img] * 3, axis=-1)
         elif img.shape[-1] == 4:
             img = img[..., :3]
 
+        # 0~1 정규화 및 차원 변경: (H, W, C) -> (C, H, W)
         img = img.astype(np.float32) / 255.0
         img = img.transpose(2, 0, 1)
 
+        tensor_img = torch.tensor(img, dtype=torch.float32)
+
         if self._do_transform:
-            img = torch.tensor(img, dtype=torch.float32)
-            img = self._transformer(img)
-        else:
-            img = torch.tensor(img, dtype=torch.float32)
+            tensor_img = self._transformer(tensor_img)
 
-        return img
+        return tensor_img
 
-    def predict(self, np_image: np.ndarray):
-        self._model.eval()
+    def predict(self, np_image: np.ndarray) -> np.ndarray:
+        """입력 이미지를 모델에 통과시켜 2D 결과 맵을 반환합니다."""
+        tensor_img = self.preprocess_image(np_image).to(self._device)
+        tensor_img = tensor_img.unsqueeze(0)  # 배치 차원 추가
 
-        np_image = self.post_process_raw_image(np_image)
+        # 중요: 추론 시 불필요한 연산과 메모리 낭비를 막기 위해 no_grad() 적용
+        with torch.no_grad():
+            outputs: Tensor = self._model(tensor_img)
 
-        tensor_img: Tensor = Tensor(np_image).to(self._device)
-        tensor_img = tensor_img.unsqueeze(0)  # Add batch dimension
+        outputs = outputs.squeeze(0)  # 배치 차원 제거
+        return outputs.cpu().numpy()
 
-        outputs: Tensor = self._model(tensor_img)
-        outputs = outputs.squeeze(0)
+    def get_1d_pdm(
+        self, result: np.ndarray, target_class_idx: int
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        2D 결과 맵을 세로축(Y) 기준으로 압축하여 1차원 프로파일을 생성합니다.
+        이전 프레임과의 이동 평균(EMA)을 통해 값이 급격하게 튀는 것을 방지합니다.
+        return: (원본 타겟 클래스 맵, 1D PDM 배열)
+        """
 
-        np_outputs = outputs.detach().cpu().numpy()
+        target_map = result[target_class_idx]
 
-        return np_outputs
-
-    def get_1d_pdm(self, result: np.ndarray):
-        normalized_result = result * np.exp(
-            -self._gain * (1 - result)
-        )  # 지수 함수로 가중치 적용
+        # 확신도가 높은 값에 가중치를 부여하는 지수 함수 적용
+        normalized_result = target_map * np.exp(-self._gain * (1 - target_map))
 
         data = np.sum(normalized_result, axis=0)
+
+        # 프레임 간 스무딩 (부드러운 전환 효과)
         if self._last_results_data is not None:
             data = data * self._gamma + (1 - self._gamma) * self._last_results_data
-            self._last_results_data = data
+        self._last_results_data = data
 
-        return data
+        return target_map, data
 
-    def apply_weights(self, data: np.ndarray, weights: list):
-        """
-        Apply weights to the data.
-        :param data: 1D array of data
-        :param weights: list of weights
-        :return: weighted data
-        """
+    def apply_weights(self, data: list, weights: list) -> np.ndarray:
+        """동적으로 계산된 구역의 최대값 데이터에 각각 커스텀 가중치를 곱해줍니다."""
         if len(data) != len(weights):
-            raise ValueError("Data and weights must have the same length.")
+            raise ValueError(
+                f"데이터 구역 수({len(data)})와 가중치 길이({len(weights)})가 동일해야 합니다."
+            )
 
-        weighted_data = data * np.array(weights)
-        return weighted_data
+        return np.array(data) * np.array(weights)
 
-    def post_process_results(self, results: np.ndarray, weights: list):
+    def post_process_results(
+        self, results: np.ndarray, weights: list, target_class_idx: int
+    ) -> Tuple[np.ndarray, list, np.ndarray, int, np.ndarray]:
         """
-        Input FCN results and weights, and return the target column and empty columns.
-        Returns:
-            one_d_pdm, res, top_peak_datas, top_peak_idx
+        전체 결과 맵(2D)에서 최종 메인 구역과 인접 구역을 동적으로 파악합니다.
+
+        :return: (1차원 PDM 배열, 인접 구역 리스트, 가중치가 적용된 N구역 최댓값, 메인 타겟 인덱스, 원본 타겟 클래스 맵)
         """
+        # 경계선 개수에서 1을 빼면 실제 구역(Column)의 개수가 됩니다.
+        num_peaks = len(self._peak_boundaries) - 1
+        target_map, one_d_pdm = self.get_1d_pdm(results, target_class_idx)
 
-        num_peaks = 4
-        one_d_pdm = self.get_1d_pdm(results)
-
-        # Find the top peaks and apply weights
+        # 가변 구역(긴빠이)의 최댓값 탐색 및 가중치 적용
         max_peak_data = self.find_top_peaks_ginppai(one_d_pdm)
+        weighted_peak_data = self.apply_weights(max_peak_data, weights)
 
-        max_peak_data = self.apply_weights(max_peak_data, weights)
+        # 가장 값이 높은 구역을 최종 메인 타겟으로 선정
+        top_peak_idx = int(np.argmax(weighted_peak_data))
 
-        top_peak_idx = np.argmax(max_peak_data)
-
+        # 메인 타겟 바로 양옆의 인접 구역 인덱스 추출 (가변 길이 대응)
         res = [
             idx
             for idx in range(top_peak_idx - 1, top_peak_idx + 2)
             if 0 <= idx < num_peaks and idx != top_peak_idx
         ]
 
-        return one_d_pdm, res, max_peak_data, top_peak_idx
+        return one_d_pdm, res, weighted_peak_data, top_peak_idx, target_map
 
-    def find_top_peaks_ginppai(self, data_1d: np.ndarray):
+    def find_top_peaks_ginppai(self, data_1d: np.ndarray) -> list:
         """
-        Returns the top 4 peaks and max peak index.
+        1차원 데이터를 설정된 가변 구역(boundaries)으로 나누고 각 구역의 최댓값을 리스트로 반환합니다.
         """
-        col1 = np.max(data_1d[:185])
-        col2 = np.max(data_1d[185:320])
-        col3 = np.max(data_1d[320:455])
-        col4 = np.max(data_1d[455:640])
+        b = self._peak_boundaries
+        peaks = []
 
-        result = [col1, col2, col3, col4]
+        try:
+            for i in range(len(b) - 1):
+                # 각 구역별 데이터를 슬라이싱
+                region_data = data_1d[b[i] : b[i + 1]]
 
-        return result
+                # 구역 크기가 0이거나 데이터가 비어있는 경우 방어 코드
+                if len(region_data) == 0:
+                    peaks.append(0.0)
+                else:
+                    peaks.append(float(np.max(region_data)))
 
-    def find_top_peaks(self, data, num_peaks=4, smooth_sigma=5, min_distance=10):
+        except IndexError as e:
+            raise ValueError(
+                f"[Error] peak_boundaries가 데이터의 가로 길이를 초과했거나 형태가 잘못되었습니다: {e}"
+            )
+
+        return peaks
+
+    def find_top_peaks(
+        self, data: np.ndarray, num_peaks=4, smooth_sigma=5, min_distance=10
+    ) -> tuple:
         """
-        데이터에서 상위 num_peaks개의 주요 피크를 찾는 함수.
-
-        :param data: 1차원 배열 (측정 데이터)
-        :param num_peaks: 찾을 피크 개수
-        :param smooth_sigma: 가우시안 필터의 표준편차 (노이즈 제거)
-        :param min_distance: 피크 간 최소 거리 (작은 봉우리를 무시)
-        :return: 상위 num_peaks개의 피크 인덱스와 해당 값
+        (유틸 함수) 데이터에서 상위 주요 피크를 동적으로 찾는 견고한 로직.
+        현재 파이프라인에서는 쓰이지 않으나 예비용으로 유지됨.
         """
-
-        # 1. 스무딩 적용 (노이즈 완화)
         smoothed_data = gaussian_filter1d(data, sigma=smooth_sigma)
-
-        # 2. 피크 찾기 (높이 및 거리 조건 적용)
         peaks, _ = find_peaks(smoothed_data, distance=min_distance)
-
-        # 3. 상위 num_peaks개의 피크 선택
         top_peaks = sorted(peaks, key=lambda x: data[x], reverse=True)[:num_peaks]
-
         return top_peaks, data[top_peaks]
-
-
-class FCNClientManager(Manager):
-    def __init__(self, node: Node, *args, **kwargs):
-        super().__init__(node, *args, **kwargs)
-
-        # >>> Managers >>>
-        self._object_manager = ObjectManager(self._node, *args, **kwargs)
-        # <<< Managers >>>
-
-        # >>> Data >>>
-        self._cls: str = None
-        # <<< Data >>>
-
-        # >>> ROS2 >>>
-        self._cls_subscriber = self._node.create_subscription(
-            String,
-            self._node.get_name() + "/fcn_target_cls",
-            self.cls_callback,
-            qos_profile=qos_profile_system_default,
-        )
-        self._client = self._node.create_client(
-            FCNIntegratedRequest, "/fcn_integrated_request"
-        )
-        # <<< ROS2 <<<
-
-        # No main loop. This class is used as a callback
-
-    def cls_callback(self, msg: String):
-        if msg.data in self._object_manager.names.keys():
-            self._cls = msg.data
-
-    def send_fcn_integrated_request(self):
-        if self._cls is None:
-            return None
-
-        request = FCNIntegratedRequest.Request()
-        request.target_cls = self._cls
-        response: FCNIntegratedRequest.Response = self._client.call(request)
-
-        self._cls = None
-
-        return response
-
-
-class GridManager(Manager):
-    class Grid(object):
-        def __init__(
-            self,
-            row_id: str,
-            col_id: int,
-            center_coord: Point,
-            size: Vector3,
-            threshold: int = 1000,
-        ):
-            self._row_id = row_id
-            self._col_id = col_id
-
-            self._size = size
-            self._center_coord = center_coord
-
-            self._threshold = threshold
-
-            self._points = 0
-
-        @property
-        def row(self):
-            return self._row_id
-
-        @property
-        def col(self):
-            return self._col_id
-
-        @property
-        def center_coord(self):
-            return self._center_coord
-
-        @property
-        def is_occupied(self):
-            return self._points > self._threshold
-
-        def slice(self, points: np.array):
-            xrange = (
-                self._center_coord.x - (self._size.x / 2) * 0.9,
-                self._center_coord.x + (self._size.x / 2) * 0.9,
-            )
-            yrange = (
-                self._center_coord.y - (self._size.y / 2) * 0.9,
-                self._center_coord.y + (self._size.y / 2) * 0.9,
-            )
-            zrange = (
-                self._center_coord.z - (self._size.z / 2) * 0.9,
-                self._center_coord.z + (self._size.z / 2) * 0.9,
-            )
-
-            points_in_grid: np.ndarray = PointCloudTransformer.ROI_Color_filter(
-                points,
-                ROI=True,
-                x_range=xrange,
-                y_range=yrange,
-                z_range=zrange,
-                rgb=False,
-            )
-
-            self._points = points_in_grid.shape[0]
-
-        def get_marker(self, header: Header):
-            marker = Marker(
-                header=header,
-                ns=f"{self._row_id}{self._col_id}",
-                id=((ord(self._row_id) - 64) * 10) + self._col_id,
-                type=Marker.CUBE,
-                action=Marker.ADD,
-                pose=Pose(
-                    position=self._center_coord,
-                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
-                scale=Vector3(
-                    x=self._size.x * 0.9,
-                    y=self._size.y * 0.9,
-                    z=self._size.z * 0.9,
-                ),
-                color=ColorRGBA(
-                    r=1.0 if self._points > self._threshold else 0.0,
-                    g=0.0 if self._points > self._threshold else 1.0,
-                    b=0.0,
-                    a=0.5,
-                ),
-            )
-
-            return marker
-
-        def get_text_marker(self, header: Header):
-            marker = Marker(
-                header=header,
-                ns=f"{self._row_id}{self._col_id}_text",
-                id=((ord(self._row_id) - 64) * 10) + self._col_id + 100,
-                type=Marker.TEXT_VIEW_FACING,
-                action=Marker.ADD,
-                pose=Pose(
-                    position=self._center_coord,
-                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-                ),
-                scale=Vector3(
-                    x=0.0,
-                    y=0.0,
-                    z=0.01,
-                ),
-                color=ColorRGBA(r=1.0, g=1.0, b=1.0, a=0.7),
-                text=f"{self._row_id}{self._col_id}\t{int(self._points)}",
-            )
-
-            return marker
-
-        def slice_and_get_points(self, points: np.array):
-            xrange = (
-                self._center_coord.x - (self._size.x / 2) * 0.9,
-                self._center_coord.x + (self._size.x / 2) * 0.9,
-            )
-            yrange = (
-                self._center_coord.y - (self._size.y / 2) * 0.9,
-                self._center_coord.y + (self._size.y / 2) * 0.9,
-            )
-            zrange = (
-                self._center_coord.z - (self._size.z / 2) * 0.9,
-                self._center_coord.z + (self._size.z / 2) * 0.9,
-            )
-
-            points_in_grid: np.ndarray = PointCloudTransformer.ROI_Color_filter(
-                points,
-                ROI=True,
-                x_range=xrange,
-                y_range=yrange,
-                z_range=zrange,
-                rgb=False,
-            )
-
-            return points_in_grid
-
-    class Line(object):
-        def __init__(self, id: str):
-            self._id = id
-            self._grids = []
-
-        def append(self, grid, by: str):
-            grid: GridManager.Grid
-            if not isinstance(grid, GridManager.Grid):
-                raise TypeError("grid must be an instance of GridManager.Grid")
-
-            self._grids.append(grid)
-
-            self._grids = self.sort(by=by)
-
-            return self._grids
-
-        def set(self, grids, by: str):
-            grids: List[GridManager.Grid]
-
-            if not all(isinstance(grid, GridManager.Grid) for grid in grids):
-                raise TypeError("grids must be a list of GridManager.Grid instances")
-
-            self._grids = grids
-
-            self._grids = self.sort(by=by)
-
-            return self._grids
-
-        def sort(self, by: str):
-            """
-            :param by: "row" or "col"
-            """
-
-            if by not in ["row", "col"]:
-                raise ValueError("Sort parameter 'by' must be either 'row' or 'col'")
-
-            self._grids.sort(key=lambda grid: getattr(grid, by))
-            return self._grids
-
-        @property
-        def id(self):
-            return self._id
-
-        @property
-        def grids(self):
-            return self._grids
-
-        def __lt__(self, other):
-            if not isinstance(other, GridManager.Line):
-                return NotImplemented
-            return ord(self._id) < ord(other._id)
-
-        def __gt__(self, other):
-            if not isinstance(other, GridManager.Line):
-                return NotImplemented
-            return ord(self._id) > ord(other._id)
-
-        def __le__(self, other):
-            if not isinstance(other, GridManager.Line):
-                return NotImplemented
-            return ord(self._id) <= ord(other._id)
-
-        def __ge__(self, other):
-            if not isinstance(other, GridManager.Line):
-                return NotImplemented
-            return ord(self._id) >= ord(other._id)
-
-        def __eq__(self, other):
-            if not isinstance(other, GridManager.Line):
-                return NotImplemented
-            return ord(self._id) == ord(other._id)
-
-        def __ne__(self, other):
-            if not isinstance(other, GridManager.Line):
-                return NotImplemented
-            return ord(self._id) != ord(other._id)
-
-    def __init__(self, node: Node, *args, **kwargs):
-        super().__init__(node, *args, **kwargs)
-
-        # >>> Load Files >>>
-        fcn_package_path = get_package_share_directory("fcn_network")
-
-        resource_path = os.path.join(
-            fcn_package_path, "../ament_index/resource_index/packages"
-        )
-
-        grid_data_path = kwargs["grid_data_file"]
-        if not os.path.isfile(grid_data_path):
-            grid_data_path = os.path.join(resource_path, grid_data_path)
-
-        with open(grid_data_path, "r") as f:
-            self._grid_data = json.load(f)
-        # <<< Load Files
-
-        # >>> Initialize the Grid Manager >>>
-        self._grids, self._rows, self._cols = self.create_grid()
-
-    def create_grid(self) -> Tuple[List[Grid], List[Line], List[Line]]:
-        rows = self._grid_data["rows"]
-        cols = self._grid_data["columns"]
-
-        grid_identifier = self._grid_data["grid_identifier"]
-
-        grid_size = Vector3(
-            x=grid_identifier["grid_size"]["x"],
-            y=grid_identifier["grid_size"]["y"],
-            z=grid_identifier["grid_size"]["z"],
-        )
-        start_center_coord = Point(
-            x=grid_identifier["start_center_coord"]["x"],
-            y=grid_identifier["start_center_coord"]["y"],
-            z=grid_identifier["start_center_coord"]["z"],
-        )
-        point_threshold = grid_identifier["point_threshold"]
-
-        grids = []
-        cols_line = [GridManager.Line(id=str(col)) for col in cols]  # e.g. '0'
-        rows_line = [GridManager.Line(id=str(row)) for row in rows]  # e.g. 'A'
-
-        for r, row_line, row in zip(range(len(rows)), rows_line, rows):
-            for c, col_line, col in zip(range(len(cols)), cols_line, cols):
-                center_coord = Point(
-                    x=start_center_coord.x + grid_size.x * r,
-                    y=start_center_coord.y - grid_size.y * c,
-                    z=start_center_coord.z,
-                )
-
-                grid = self.Grid(
-                    row_id=row,
-                    col_id=col,
-                    center_coord=center_coord,
-                    size=grid_size,
-                    threshold=point_threshold,
-                )
-
-                self._node.get_logger().info(
-                    f"Append grid {row}{col} at {center_coord.x:.3f}, {center_coord.y:.3f}, {center_coord.z:.3f}"
-                )
-
-                # Append grid to row and column, and grids
-                row_line.append(grid, by="col")
-                col_line.append(grid, by="row")
-                grids.append(grid)
-
-        return grids, rows_line, cols_line
-
-    @property
-    def rows(self):
-        return self._rows
-
-    @property
-    def cols(self):
-        return self._cols
-
-    @property
-    def grids(self):
-        return self._grids
-
-    def get_grid(self, row: str, col: int):
-        """
-        :param row: Row ID (e.g. 'A')
-        :param col: Column ID (e.g. 0)
-        :return: Grid object
-        """
-
-        for grid in self._grids:
-            if grid.row == row and grid.col == col:
-                return grid
-
-        raise ValueError(f"Grid {row}{col} not found")
-
-    def get_grid_data(self):
-        return self._grid_data
-
-    def get_colums_length(self):
-        return len(self._grid_data["columns"])
-
-
-class FCN_Integration_Manager(Manager):
-    def __init__(self, node: Node, *args, **kwargs):
-        super().__init__(node, *args, **kwargs)
-
-        # >>> Service Clients
-        self._fcn_client = self._node.create_client(FCNRequest, "/fcn_request")
-        self._fcn_occupied_client = self._node.create_client(
-            FCNOccupiedRequest, "/fcn_occupied_request"
-        )
-        # <<< Service Clients
-
-    def run(
-        self, target_cls: str, last_target_col: int = -1
-    ) -> Tuple[FCNRequest.Response, FCNOccupiedRequest.Response]:
-        """
-        :param target_cls: Target class to be detected. e.g. 'bottle_1'
-        """
-
-        # >>> STEP 1. FCN Request >>>
-        fcn_request = FCNRequest.Request()
-        fcn_request.target_cls = target_cls
-        fcn_request.last_target_col = last_target_col
-        fcn_response: FCNRequest.Response = self._fcn_client.call(fcn_request)
-
-        if fcn_response is None:
-            self._node.get_logger().warn("FCN response is None.")
-            return None, None
-
-        if fcn_response.target_col == -1:
-            self._node.get_logger().warn("FCN response target_col is -1.")
-            return fcn_response, None
-
-        # >>> STEP 2. FCN Occupied Request >>>
-        fcn_occupied_request = FCNOccupiedRequest.Request()
-        fcn_occupied_request.empty_cols = fcn_response.empty_cols.tolist()
-        fcn_occupied_request.target_col = fcn_response.target_col
-
-        fcn_occupied_response: FCNOccupiedRequest.Response = (
-            self._fcn_occupied_client.call(fcn_occupied_request)
-        )
-
-        if fcn_occupied_response is None:
-            self._node.get_logger().warn("FCN occupied response is None.")
-            return fcn_response, None
-
-        if fcn_occupied_response.moving_row == "Z":
-            self._node.get_logger().warn("FCN occupied response moving_row is Z.")
-            return fcn_response, None
-
-        return fcn_response, fcn_occupied_response
