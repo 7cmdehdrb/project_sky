@@ -52,7 +52,25 @@ class MockMainNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = MockMainNode()
-    rclpy.spin(node)
+
+    import threading
+
+    # rclpy.spin(node) 대신 별도의 스레드에서 실행
+    spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
+    spin_thread.start()
+
+    flag = True
+
+    r = node.create_rate(10.0)
+    while rclpy.ok():
+
+        if flag:
+            node.send_request()
+            node.get_logger().info("Main loop에서 제어 요청 발송!")
+            flag = False
+
+        r.sleep()
+
     node.destroy_node()
     rclpy.shutdown()
 
