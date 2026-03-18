@@ -99,10 +99,10 @@ class SegmentationDataCreator(Node):
         }
 
         self.label_path = (
-            "/home/min/7cmdehdrb/ros2_ws/src/object_tracker/resource/labels/train"
+            "/home/irol/ros2_ws/src/object_tracker/resource/labels/train"
         )
         self.image_path = (
-            "/home/min/7cmdehdrb/ros2_ws/src/object_tracker/resource/images/train"
+            "/home/irol/ros2_ws/src/object_tracker/resource/images/train"
         )
         self.txt = ""
         self.image = None

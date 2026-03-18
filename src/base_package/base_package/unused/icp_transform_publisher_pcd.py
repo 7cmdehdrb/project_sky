@@ -111,7 +111,7 @@ class ScanMatchingNode(Node):
     def __init__(self):
         super().__init__("scan_matching_node")
 
-        pcd_file_path = "/home/min/7cmdehdrb/ros2_ws/coca_cola_transformed.ply"
+        pcd_file_path = "/home/irol/ros2_ws/coca_cola_transformed.ply"
 
         # Resize matrix. mm -> m
         self.resize_matrix = np.array(

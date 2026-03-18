@@ -12,6 +12,7 @@ from std_msgs.msg import Float32MultiArray
 # 구현하신 클래스 임포트 (경로는 패키지 구조에 맞게 수정하세요)
 from fcn_network.grid_manager import GridManager
 from base_package.header import PointCloudTransformer
+from base_package.transform_manager import TransformManager
 
 
 class GridDistancePublisherNode(Node):
@@ -22,6 +23,7 @@ class GridDistancePublisherNode(Node):
         self.get_logger().info(f"GridManager 초기화 중... (경로: {grid_json_path})")
 
         self.grid_manager = GridManager(resource_path=grid_json_path)
+        self.transform_manager = TransformManager(node=self)
 
         # 2. 데이터 버퍼 (가장 최근 수신된 PointCloud2 메세지 저장)
         self._latest_pc_msg = None
@@ -46,6 +48,12 @@ class GridDistancePublisherNode(Node):
             "/front_object_distance",  # Policy 노드에서 구독할 토픽
             qos_profile=qos_profile_system_default,
         )
+        
+        self._wtf = self.create_publisher(
+            PointCloud2,
+            "/processed_pointcloud",  # 디버깅용 토픽 (처리된 포인트 클라우드 발행, 필요시 활용)
+            qos_profile=qos_profile_system_default,
+        )
 
         # 5. 2Hz 타이머 (0.5초 주기)
         self.timer = self.create_timer(0.5, self.process_and_publish)
@@ -65,14 +73,20 @@ class GridDistancePublisherNode(Node):
 
         # (1) PointCloud2 -> Numpy 변환 (RGB 미사용)
         try:
+            mat = self.transform_manager.get_transform_matrix(target_frame="camera1_link", source_frame=self._latest_pc_msg.header.frame_id)
+            
             points_np = PointCloudTransformer.pointcloud2_to_numpy(msg, rgb=False)
+            points_np = PointCloudTransformer.transform_pointcloud(points=points_np, transform_matrix=mat)
         except Exception as e:
             self.get_logger().error(f"PointCloud 변환 실패: {e}")
             return
 
+        # (3) Grid 업데이트 및 Marker Array 획득
+        self.grid_manager.update_occupancy(points_np)
+
         # (2) Grid 업데이트 및 Marker Array 획득
         marker_array = self.grid_manager.get_marker_array(
-            header=Header(stamp=self.get_clock().now().to_msg(), frame_id="base_link"),
+            header=Header(stamp=self.get_clock().now().to_msg(), frame_id="camera1_link"),
             points=points_np,
         )
 
@@ -110,7 +124,7 @@ class GridDistancePublisherNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = GridDistancePublisherNode(
-        grid_json_path="/home/min/7cmdehdrb/project_sky/src/fcn_network/resource/drop_grid_data.json"
+        grid_json_path="/home/irol/project_sky/src/fcn_network/resource/grid_data.json"
     )
     try:
         rclpy.spin(node)

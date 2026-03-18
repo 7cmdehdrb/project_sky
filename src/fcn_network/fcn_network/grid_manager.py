@@ -27,6 +27,7 @@ from builtin_interfaces.msg import Duration as BuiltinDuration
 from tf2_ros import *
 
 
+
 class GridCell:
     """개별 그리드 셀의 정보와 상태, 시각화 마커 생성을 담당하는 클래스"""
 
@@ -104,6 +105,7 @@ class GridCell:
 
         self._points_count = np.sum(mask)
         self._is_occupied = self._points_count > self._threshold
+        
 
         # --- 추가된 로직: 통계량 (Mean, Covariance) 계산 ---
         if self._is_occupied and self._points_count > 0:
@@ -155,6 +157,34 @@ class GridCell:
             color=ColorRGBA(r=r_color, g=g_color, b=0.0, a=0.5),
         )
         return marker
+
+    def get_text_marker(self, header: Header) -> Marker:
+        """셀 ID를 표시하는 텍스트 마커를 리턴합니다."""
+        marker_id = ((ord(self._row_id) - 64) * 10) + self._col_id + 1000  # 텍스트 마커는 ID offset
+
+        text_marker = Marker(
+            header=header,
+            ns=self.id,
+            id=marker_id,
+            type=Marker.TEXT_VIEW_FACING,
+            action=Marker.ADD,
+            pose=Pose(
+                position=Point(
+                    x=self._center_coord.x,
+                    y=self._center_coord.y,
+                    z=self._center_coord.z + (self._size.z / 2) + 0.03,  # 셀 위에 약간 띄워서 표시
+                ),
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            scale=Vector3(x=0.05, y=0.05, z=0.05),  # 텍스트 크기
+            color=ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0),  # 흰색
+        )
+        
+        cnt_k = self._points_count / 1000.0  # 점 개수를 천 단위로 나눠서 표시 (예: 15000 -> 15.0)
+
+        text_marker.text = f"{self.id} {cnt_k:.1f}k"
+        # self.id + " " + str(cnt_k)  # 예: 'A0 15' (셀 ID + 점 개수)
+        return text_marker
 
 
 class GridManager:
@@ -242,6 +272,7 @@ class GridManager:
         marker_array = MarkerArray()
         for cell in self._cells.values():
             marker_array.markers.append(cell.get_marker(header))
+            marker_array.markers.append(cell.get_text_marker(header))
 
         return marker_array
 
@@ -267,3 +298,8 @@ class GridManager:
                     result[col] = row
                     break  # 가장 앞의 하나를 찾았으므로 해당 열은 탐색 종료
         return result
+
+    def update_occupancy(self, points: np.ndarray):
+        """외부에서 포인트 클라우드 데이터를 받아 모든 셀의 점유 상태를 갱신하는 함수입니다."""
+        for cell in self._cells.values():
+            cell.update_occupancy(points)

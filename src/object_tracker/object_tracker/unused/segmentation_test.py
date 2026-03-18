@@ -48,22 +48,22 @@ def adjust_sim_image(image_path, stats):
 
 def main():
     model = YOLO(
-        "/home/min/7cmdehdrb/ros2_ws/third_party/yolo/runs0225/segment/train/weights/best.pt",
+        "/home/irol/ros2_ws/third_party/yolo/runs0225/segment/train/weights/best.pt",
         verbose=True,
     )
     model.eval()
 
     image_paths = [
-        "/home/min/7cmdehdrb/ros2_ws/src/fcn_network/resource/001.png",
-        "/home/min/7cmdehdrb/ros2_ws/src/fcn_network/resource/002.png",
-        "/home/min/7cmdehdrb/ros2_ws/src/fcn_network/resource/003.png",
-        "/home/min/7cmdehdrb/ros2_ws/src/fcn_network/resource/004.png",
+        "/home/irol/ros2_ws/src/fcn_network/resource/001.png",
+        "/home/irol/ros2_ws/src/fcn_network/resource/002.png",
+        "/home/irol/ros2_ws/src/fcn_network/resource/003.png",
+        "/home/irol/ros2_ws/src/fcn_network/resource/004.png",
     ]
 
     for image_path in image_paths:
         image = cv2.imread(image_path, cv2.IMREAD_COLOR)
         with open(
-            "/home/min/7cmdehdrb/ros2_ws/third_party/yolo/sim_stats.json", "r"
+            "/home/irol/ros2_ws/third_party/yolo/sim_stats.json", "r"
         ) as f:
             stats = json.load(f)
 

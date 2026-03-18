@@ -45,7 +45,7 @@ class FCNServiceNode(Node):
             node=self,
             fcn_gain=2.0,  # 임의 파라미터
             fcn_gamma=0.7,  # 임의 파라미터
-            model_path="/home/min/7cmdehdrb/project_sky/src/fcn_network/resource/best_model.pth",  # 모델 경로
+            model_path="/home/irol/project_sky/src/fcn_network/resource/best_model.pth",  # 모델 경로
             fcn_image_transform=True,
         )
         # 구역 설정 (필요시 동적 변경 가능)

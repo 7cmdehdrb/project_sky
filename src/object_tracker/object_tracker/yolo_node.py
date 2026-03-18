@@ -283,8 +283,8 @@ def main(args=None):
     """
 
     node = RealTimeSegmentationNode(
-        model_file="/home/min/7cmdehdrb/project_sky/src/object_tracker/resource/best_hg.pt",
-        obj_bounds_file="/home/min/7cmdehdrb/project_sky/src/object_tracker/resource/obj_bounds.json",
+        model_file="/home/irol/project_sky/src/object_tracker/resource/best_hg.pt",
+        obj_bounds_file="/home/irol/project_sky/src/object_tracker/resource/obj_bounds.json",
         conf_threshold=0.7,
     )
 
