@@ -8,11 +8,7 @@ Panels:
         - /Status1
         - /Axes1
         - /PointCloud21
-        - /TF1
-        - /TF1/Frames1
-        - /TF1/Tree1
         - /MarkerArray1
-        - /MarkerArray1/Status1
       Splitter Ratio: 0.6441176533699036
     Tree Height: 1157
   - Class: rviz_common/Selection
@@ -53,6 +49,40 @@ Visualization Manager:
       Plane: XY
       Plane Cell Count: 10
       Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Frame Timeout: 15
+      Frames:
+        All Enabled: false
+        camera1_color_frame:
+          Value: false
+        camera1_color_optical_frame:
+          Value: false
+        camera1_depth_frame:
+          Value: false
+        camera1_depth_optical_frame:
+          Value: false
+        camera1_link:
+          Value: true
+        world:
+          Value: true
+      Marker Scale: 1
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Tree:
+        camera1_link:
+          camera1_color_frame:
+            camera1_color_optical_frame:
+              {}
+          camera1_depth_frame:
+            camera1_depth_optical_frame:
+              {}
+        world:
+          {}
+      Update Interval: 0
       Value: true
     - Class: rviz_default_plugins/Axes
       Enabled: true
@@ -96,7 +126,7 @@ Visualization Manager:
       Name: PointCloud2
       Position Transformer: XYZ
       Selectable: true
-      Size (Pixels): 2
+      Size (Pixels): 3
       Size (m): 0.009999999776482582
       Style: Points
       Topic:
@@ -108,39 +138,6 @@ Visualization Manager:
         Value: /camera/camera1/depth/color/points
       Use Fixed Frame: true
       Use rainbow: true
-      Value: true
-    - Class: rviz_default_plugins/TF
-      Enabled: true
-      Frame Timeout: 15
-      Frames:
-        All Enabled: false
-        camera1_color_frame:
-          Value: false
-        camera1_color_optical_frame:
-          Value: false
-        camera1_depth_frame:
-          Value: false
-        camera1_depth_optical_frame:
-          Value: false
-        camera1_link:
-          Value: true
-        world:
-          Value: true
-      Marker Scale: 1
-      Name: TF
-      Show Arrows: true
-      Show Axes: true
-      Show Names: true
-      Tree:
-        world:
-          camera1_link:
-            camera1_color_frame:
-              camera1_color_optical_frame:
-                {}
-            camera1_depth_frame:
-              camera1_depth_optical_frame:
-                {}
-      Update Interval: 0
       Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
@@ -168,7 +165,7 @@ Visualization Manager:
   Enabled: true
   Global Options:
     Background Color: 61; 56; 70
-    Fixed Frame: camera1_link
+    Fixed Frame: world
     Frame Rate: 30
   Name: root
   Tools:
@@ -211,25 +208,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 2.9449849128723145
+      Distance: 1.5632243156433105
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 0.48171141743659973
-        Y: 0.2677786648273468
-        Z: -0.045246921479701996
+        X: 0.16880474984645844
+        Y: 0.5819985866546631
+        Z: 0.527865469455719
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.6153984665870667
+      Pitch: 0.5903977751731873
       Target Frame: base_link
       Value: Orbit (rviz_default_plugins)
-      Yaw: 3.76039981842041
+      Yaw: 5.325399398803711
     Saved:
       - Class: rviz_default_plugins/Orbit
         Distance: 3.2965946197509766

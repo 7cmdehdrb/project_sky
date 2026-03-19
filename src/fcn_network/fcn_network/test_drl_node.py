@@ -39,7 +39,7 @@ class MockMainNode(Node):
             lambda fut, req_num=self.request_count: self.response_callback(fut, req_num)
         )
 
-    def response_callback(self, future, req_num):
+    def response_callback(self, future: rclpy.Future, req_num: int):
         try:
             result = future.result()
             self.get_logger().info(

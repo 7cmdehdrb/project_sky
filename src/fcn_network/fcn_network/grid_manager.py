@@ -225,17 +225,21 @@ class GridCell:
             type=Marker.CUBE,
             action=Marker.ADD,
             pose=Pose(
-                position=self._center_coord,
+                position=Point(
+                    x=float(self._mean[0]),
+                    y=float(self._mean[1]),
+                    z=float(self._mean[2]),
+                ),
                 orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
             ),
             scale=Vector3(
-                x=self._scale[0],
-                y=self._scale[1],
-                z=self._scale[2],
+                x=float(self._scale[0]),
+                y=float(self._scale[1]),
+                z=float(self._scale[2]),
             ),
-            color=ColorRGBA(r=1.0, g=0.0, b=0.0, a=0.8),  # 빨간색
+            color=ColorRGBA(r=0.0, g=0.0, b=1.0, a=0.5),  # 파란색 (볼륨 마커는 항상 파란색으로 표시, 점유 여부와 무관하게)
         )
-
+        
         return volume_marker
 
 
@@ -325,7 +329,8 @@ class GridManager:
         for cell in self._cells.values():
             marker_array.markers.append(cell.get_marker(header))
             marker_array.markers.append(cell.get_text_marker(header))
-            marker_array.markers.append(cell.get_volume_marker(header))
+            if cell.is_occupied:
+                marker_array.markers.append(cell.get_volume_marker(header))
 
         return marker_array
 
