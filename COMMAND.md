@@ -34,7 +34,7 @@ python3 src/fcn_network/fcn_network/fcn_node.py
 `
 
 `
-python3 src/fcn_network/fcn_network/drl_node.py
+ 
 `
 
 
