@@ -48,7 +48,7 @@ class GridDistancePublisherNode(Node):
             "/front_object_distance",  # Policy 노드에서 구독할 토픽
             qos_profile=qos_profile_system_default,
         )
-        
+
         self._wtf = self.create_publisher(
             PointCloud2,
             "/processed_pointcloud",  # 디버깅용 토픽 (처리된 포인트 클라우드 발행, 필요시 활용)
@@ -66,27 +66,36 @@ class GridDistancePublisherNode(Node):
 
     def process_and_publish(self):
         """2Hz 주기로 호출되어 Numpy 변환 -> 마커 갱신 -> 거리 계산 및 발행 수행"""
-        if self._latest_pc_msg is None:
-            return
+        if self._latest_pc_msg is not None:
+            msg = self._latest_pc_msg
 
-        msg = self._latest_pc_msg
+            # (1) PointCloud2 -> Numpy 변환 (RGB 미사용)
+            try:
+                mat = self.transform_manager.get_transform_matrix(
+                    target_frame="camera1_link",
+                    source_frame=self._latest_pc_msg.header.frame_id,
+                )
 
-        # (1) PointCloud2 -> Numpy 변환 (RGB 미사용)
-        try:
-            mat = self.transform_manager.get_transform_matrix(target_frame="camera1_link", source_frame=self._latest_pc_msg.header.frame_id)
-            
-            points_np = PointCloudTransformer.pointcloud2_to_numpy(msg, rgb=False)
-            points_np = PointCloudTransformer.transform_pointcloud(points=points_np, transform_matrix=mat)
-        except Exception as e:
-            self.get_logger().error(f"PointCloud 변환 실패: {e}")
-            return
+                points_np = PointCloudTransformer.pointcloud2_to_numpy(msg, rgb=False)
+                points_np = PointCloudTransformer.transform_pointcloud(
+                    points=points_np, transform_matrix=mat
+                )
+            except Exception as e:
+                self.get_logger().error(f"PointCloud 변환 실패: {e}")
+                return
 
-        # (3) Grid 업데이트 및 Marker Array 획득
-        self.grid_manager.update_occupancy(points_np)
+            # (3) Grid 업데이트 및 Marker Array 획득
+            self.grid_manager.update_occupancy(points_np)
+
+        else:
+            self.get_logger().warn("아직 PointCloud2 메세지를 수신하지 못했습니다.")
+            points_np = None  # 초기에는 포인트 데이터가 없으므로 None 처리
 
         # (2) Grid 업데이트 및 Marker Array 획득
         marker_array = self.grid_manager.get_marker_array(
-            header=Header(stamp=self.get_clock().now().to_msg(), frame_id="camera1_link"),
+            header=Header(
+                stamp=self.get_clock().now().to_msg(), frame_id="camera1_link"
+            ),
             points=points_np,
         )
 
@@ -113,8 +122,7 @@ class GridDistancePublisherNode(Node):
                 distance_list.append(float(dist))
 
         # (6) Float32MultiArray로 발행
-        dist_msg = Float32MultiArray()
-        dist_msg.data = distance_list
+        dist_msg = Float32MultiArray(data=distance_list)
         self.distance_pub.publish(dist_msg)
 
         # (선택) 디버깅용 로그
@@ -124,7 +132,7 @@ class GridDistancePublisherNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = GridDistancePublisherNode(
-        grid_json_path="/home/irol/project_sky/src/fcn_network/resource/grid_data.json"
+        grid_json_path="/home/min/7cmdehdrb/project_sky/src/fcn_network/resource/grid_data.json"
     )
     try:
         rclpy.spin(node)

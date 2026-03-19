@@ -27,7 +27,6 @@ from builtin_interfaces.msg import Duration as BuiltinDuration
 from tf2_ros import *
 
 
-
 class GridCell:
     """개별 그리드 셀의 정보와 상태, 시각화 마커 생성을 담당하는 클래스"""
 
@@ -50,6 +49,7 @@ class GridCell:
 
         self._mean = np.zeros(3)
         self._cov = np.zeros((3, 3))
+        self._scale = np.zeros(3)
 
     # --- Getter (조건 3) ---
     @property
@@ -105,7 +105,6 @@ class GridCell:
 
         self._points_count = np.sum(mask)
         self._is_occupied = self._points_count > self._threshold
-        
 
         # --- 추가된 로직: 통계량 (Mean, Covariance) 계산 ---
         if self._is_occupied and self._points_count > 0:
@@ -118,6 +117,8 @@ class GridCell:
             # 3. 평균 (Mean) 계산 -> 형태: (3,)
             self._mean = np.mean(xyz_points, axis=0)
 
+            self._scale = self.get_volume(xyz_points)
+
             # 4. 공분산 (Covariance) 계산 -> 형태: (3, 3)
             if self._points_count > 1:
                 # rowvar=False: 행(row)을 관측치로, 열(column)을 변수(x, y, z)로 취급
@@ -129,6 +130,29 @@ class GridCell:
             # ROI 내에 점이 전혀 없을 경우 필드 초기화
             self._mean = np.zeros(3)
             self._cov = np.zeros((3, 3))
+            self._scale = np.zeros(3)
+
+    def get_volume(self, np_points: np.ndarray) -> Marker:
+        # 1. Q1(25%)과 Q3(75%) 계산
+        Q1 = np.percentile(np_points, 25, axis=0)
+        Q3 = np.percentile(np_points, 75, axis=0)
+
+        # 2. IQR (Interquartile Range) 계산
+        IQR = Q3 - Q1
+
+        # 3. 정상 범위 설정 (보통 1.5를 곱하지만, PCD 특성에 따라 2.0 등으로 조절 가능)
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+
+        # 4. 각 축별로 정상 범위 안에 있는 포인트만 마스킹
+        # (세 축 모두 정상 범위 안에 있는 포인트만 살림)
+        mask = np.all((np_points >= lower_bound) & (np_points <= upper_bound), axis=1)
+        filtered_pcd = np_points[mask]
+
+        # 5. 필터링된 데이터에서 실제 사이즈 계산
+        scale = np.max(filtered_pcd, axis=0) - np.min(filtered_pcd, axis=0)
+
+        return scale
 
     def get_marker(self, header: Header) -> Marker:
         """현재 상태에 맞는 ROS Marker 객체를 리턴합니다."""
@@ -160,7 +184,9 @@ class GridCell:
 
     def get_text_marker(self, header: Header) -> Marker:
         """셀 ID를 표시하는 텍스트 마커를 리턴합니다."""
-        marker_id = ((ord(self._row_id) - 64) * 10) + self._col_id + 1000  # 텍스트 마커는 ID offset
+        marker_id = (
+            ((ord(self._row_id) - 64) * 10) + self._col_id + 1000
+        )  # 텍스트 마커는 ID offset
 
         text_marker = Marker(
             header=header,
@@ -172,19 +198,45 @@ class GridCell:
                 position=Point(
                     x=self._center_coord.x,
                     y=self._center_coord.y,
-                    z=self._center_coord.z + (self._size.z / 2) + 0.03,  # 셀 위에 약간 띄워서 표시
+                    z=self._center_coord.z
+                    + (self._size.z / 2)
+                    + 0.03,  # 셀 위에 약간 띄워서 표시
                 ),
                 orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
             ),
             scale=Vector3(x=0.05, y=0.05, z=0.05),  # 텍스트 크기
             color=ColorRGBA(r=1.0, g=1.0, b=1.0, a=1.0),  # 흰색
         )
-        
-        cnt_k = self._points_count / 1000.0  # 점 개수를 천 단위로 나눠서 표시 (예: 15000 -> 15.0)
 
-        text_marker.text = f"{self.id} {cnt_k:.1f}k"
+        text_marker.text = f"{self.id}"
         # self.id + " " + str(cnt_k)  # 예: 'A0 15' (셀 ID + 점 개수)
         return text_marker
+
+    def get_volume_marker(self, header: Header) -> Marker:
+        """셀의 점유 상태에 따른 볼륨 마커를 리턴합니다."""
+        marker_id = (
+            ((ord(self._row_id) - 64) * 10) + self._col_id + 2000
+        )  # 볼륨 마커는 ID offset
+
+        volume_marker = Marker(
+            header=header,
+            ns=self.id,
+            id=marker_id,
+            type=Marker.CUBE,
+            action=Marker.ADD,
+            pose=Pose(
+                position=self._center_coord,
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+            scale=Vector3(
+                x=self._scale[0],
+                y=self._scale[1],
+                z=self._scale[2],
+            ),
+            color=ColorRGBA(r=1.0, g=0.0, b=0.0, a=0.8),  # 빨간색
+        )
+
+        return volume_marker
 
 
 class GridManager:
@@ -273,6 +325,7 @@ class GridManager:
         for cell in self._cells.values():
             marker_array.markers.append(cell.get_marker(header))
             marker_array.markers.append(cell.get_text_marker(header))
+            marker_array.markers.append(cell.get_volume_marker(header))
 
         return marker_array
 

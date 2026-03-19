@@ -306,3 +306,5 @@ AMENT_IGNORE
 /src/object_tracker/resource/dataset
 /third_party/yolo
 /.vscode
+/third_party
+/src/IGNORE
