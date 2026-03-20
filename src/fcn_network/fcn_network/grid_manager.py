@@ -165,7 +165,7 @@ class GridCell:
 
         marker = Marker(
             header=header,
-            ns=self.id,
+            ns="grid_cells",
             id=marker_id,
             type=Marker.CUBE,
             action=Marker.ADD,
@@ -190,7 +190,7 @@ class GridCell:
 
         text_marker = Marker(
             header=header,
-            ns=self.id,
+            ns="grid_cell_labels",
             id=marker_id,
             type=Marker.TEXT_VIEW_FACING,
             action=Marker.ADD,
@@ -220,7 +220,7 @@ class GridCell:
 
         volume_marker = Marker(
             header=header,
-            ns=self.id,
+            ns="grid_volume",
             id=marker_id,
             type=Marker.CUBE,
             action=Marker.ADD,
