@@ -28,6 +28,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GetFCNResult.srv"
   "srv/LogRequest.srv"
   "srv/GetPolicyAction.srv"
+  "srv/GetNextDropCell.srv"
   DEPENDENCIES geometry_msgs std_msgs nav_msgs
 )
 
