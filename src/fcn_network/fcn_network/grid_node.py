@@ -49,12 +49,6 @@ class GridDistancePublisherNode(Node):
             qos_profile=qos_profile_system_default,
         )
 
-        self._wtf = self.create_publisher(
-            PointCloud2,
-            "/processed_pointcloud",  # 디버깅용 토픽 (처리된 포인트 클라우드 발행, 필요시 활용)
-            qos_profile=qos_profile_system_default,
-        )
-
         # 5. 2Hz 타이머 (0.5초 주기)
         self.timer = self.create_timer(0.5, self.process_and_publish)
 
