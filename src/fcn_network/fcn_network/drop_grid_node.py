@@ -48,7 +48,9 @@ class DropGridNode(Node):
         self.get_logger().info("Service Server 'request_drop_cell' 가 준비되었습니다.")
 
     # --- 추가 2: Service Callback ---
-    def handle_drop_request(self, request, response):
+    def handle_drop_request(
+        self, request: GetNextDropCell.Request, response: GetNextDropCell.Response
+    ):
         """서비스 요청이 들어오면 다음 셀을 획득하고 Drop 처리 후 응답합니다."""
 
         self.get_logger().info("서비스 요청이 들어왔습니다. 다음 셀을 계산합니다...")
@@ -98,7 +100,9 @@ def main(args=None):
     rclpy.init(args=args)
 
     # JSON 파일 경로
-    json_path = "/root/workspace/drl/src/fcn_network/resource/drop_grid_data.json"
+    json_path = (
+        "/home/min/7cmdehdrb/project_sky/src/fcn_network/resource/drop_grid_data.json"
+    )
     node = DropGridNode(grid_json_path=json_path)
 
     import threading

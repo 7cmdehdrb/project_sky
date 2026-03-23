@@ -24,3 +24,14 @@
 [submodule "src/Universal_Robots_ROS2_Driver"]
 	path = src/Universal_Robots_ROS2_Driver
 	url = https://github.com/7cmdehdrb/Universal_Robots_ROS2_Driver.git
+[submodule "src/Universal_Robots_ROS2_Description"]
+	path = src/Universal_Robots_ROS2_Description
+	url = https://github.com/7cmdehdrb/Universal_Robots_ROS2_Description.git
+	branch = branch_7cmdehdrb
+[submodule "src/ros2_robotiq_gripper"]
+	path = src/ros2_robotiq_gripper
+	url = https://github.com/PickNikRobotics/ros2_robotiq_gripper.git
+	branch = humble
+[submodule "src/serial"]
+	path = src/serial
+	url = https://github.com/RoverRobotics-forks/serial-ros2.git

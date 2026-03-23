@@ -6,7 +6,7 @@ ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.ena
 `
 
 `
-python3 /home/irol/project_sky/src/test/integration_image_node.py
+python3 /home/min/7cmdehdrb/project_sky/src/test/integration_image_node.py
 `
 
 ## Static TF
@@ -34,12 +34,42 @@ python3 src/fcn_network/fcn_network/fcn_node.py
 `
 
 `
- 
+python3 src/fcn_network/fcn_network/drl_node.py
 `
-
+`
+python3 python3 src/fcn_network/fcn_network/drop_grid_node.py
+`
 
 ## TEST
 `
 python3 src/fcn_network/fcn_network/test_drl_node.py
 `
 
+
+
+
+`
+cd ~/7cmdehdrb/project_sky
+source /opt/ros/humble/setup.bash
+colcon build --allow-overriding ur_description
+`
+
+`
+source /opt/ros/humble/setup.bash
+
+colcon build \
+  --packages-select serial \
+  --cmake-args -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+`
+
+`
+source install/setup.bash
+
+colcon build \
+  --packages-skip serial \
+  --allow-overriding ur_description
+`
+
+`
+LIBGL_ALWAYS_SOFTWARE=1 ros2 run moveit_setup_assistant moveit_setup_assistant
+`

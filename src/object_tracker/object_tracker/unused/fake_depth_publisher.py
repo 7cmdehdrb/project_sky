@@ -34,7 +34,9 @@ class FakeCameraPublisher(Node):
         self.bridge = CvBridge()
 
         # 1. 원본 RGB 이미지 로드
-        image_path = "/home/irol/project_sky/image_23.png"
+        image_path = (
+            "/home/min/7cmdehdrb/project_sky/src/object_tracker/resource/image_0018.png"
+        )
         self.rgb_image = cv2.imread(image_path, cv2.IMREAD_COLOR)
 
         if self.rgb_image is None:

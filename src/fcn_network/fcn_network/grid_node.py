@@ -126,7 +126,7 @@ class GridDistancePublisherNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = GridDistancePublisherNode(
-        grid_json_path="/home/irol/project_sky/src/fcn_network/resource/grid_data.json"
+        grid_json_path="/home/min/7cmdehdrb/project_sky/src/fcn_network/resource/grid_data.json"
     )
     try:
         rclpy.spin(node)

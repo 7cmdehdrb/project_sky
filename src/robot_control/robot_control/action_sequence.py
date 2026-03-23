@@ -53,10 +53,12 @@ class AxisDirection(Enum):
         new_point.z = point.z + (self.value[2] * distance * (-1.0 if reverse else 1.0))
         return new_point
 
-    def move_pose(self, pose: Pose, distance: float) -> Pose:
+    def move_pose(self, pose: Pose, distance: float, reverse: bool = False) -> Pose:
         """Pose를 복사한 뒤 position만 현재 방향으로 이동시켜 반환"""
         new_pose = copy.deepcopy(pose)
-        new_pose.position = self.move_point(pose.position, distance)
+        new_pose.position = self.move_point(
+            point=pose.position, distance=distance, reverse=reverse
+        )
         return new_pose
 
 
@@ -86,6 +88,9 @@ class ActionSequence:
         self._ur_controller: UR5eController = ur_controller
         self._gripper_controller: RobotiqController = gripper_controller
         self._target_point: Point = target_point
+        self._drop_point: Point = (
+            target_point  # 드롭 위치는 일단 target_point로 설정, 필요에 따라 별도 설정 가능
+        )
         self._direction: AxisDirection = direction
         self._waypoints: List[Pose] = []  # 액션 수행을 위한 경로의 waypoints 리스트
 
@@ -109,6 +114,14 @@ class ActionSequence:
             raise ValueError(
                 "Invalid type or shape for target_point. Expected Point, np.ndarray of shape (3,), or tuple of 3 floats."
             )
+
+    @property
+    def drop_point(self):
+        return self._drop_point
+
+    @drop_point.setter
+    def drop_point(self, value: Point):
+        self._drop_point = value
 
     @property
     def waypoints(self):
@@ -157,6 +170,7 @@ class GraspActionSequence(ActionSequence):
             node, ur_controller, gripper_controller, target_point, direction
         )
 
+        self._state = self.State.HOME  # 초기 상태는 HOME
         self._methods = {
             self.State.HOME: self._home,
             self.State.APPROACH: self._approach,
@@ -174,7 +188,7 @@ class GraspActionSequence(ActionSequence):
         """
 
         self._ur_controller.moveJ(joint_states=self._ur_controller.home_joints)
-        self._gripper_controller.control_gripper_sync(
+        self._gripper_controller.control_gripper(
             open=True, max_effort=0.0
         )  # 그리퍼 열기 명령 발행
 
@@ -189,16 +203,27 @@ class GraspActionSequence(ActionSequence):
         """
 
         # ur_controller에 정의된 safety_pose 시작
-        safety_pose: Pose = self._ur_controller.safety_pose.pose
+        # safety_pose: Pose = self._ur_controller.safety_pose.pose
+        safety_pose: Pose = copy.deepcopy(self._ur_controller.home_pose.pose)
+        safety_pose.position.y += 0.1
+        safety_pose.position.z += 0.1
 
         # target_point에서, 5cm 앞 위치 (UR 정면의 역방향)
-        first_aim_pose = self._direction.move_point(
-            pose=self._target_point, distance=0.05, reverse=True
+        first_aim_point = self._direction.move_point(
+            point=self._target_point, distance=0.1, reverse=True
+        )
+        first_aim_pose = Pose(
+            position=first_aim_point,
+            orientation=self._ur_controller.home_pose.pose.orientation,
         )
 
         # target_point에서, 2cm 앞 위치 (UR 정면의 역방향)
-        second_aim_pose = self._direction.move_point(
-            pose=self._target_point, distance=0.02, reverse=True
+        second_aim_point = self._direction.move_point(
+            point=self._target_point, distance=0.02, reverse=True
+        )
+        second_aim_pose = Pose(
+            position=second_aim_point,
+            orientation=self._ur_controller.home_pose.pose.orientation,
         )
 
         # target_point 위치 (그리퍼 중심 == 물체 중심)
@@ -212,33 +237,71 @@ class GraspActionSequence(ActionSequence):
         self._ur_controller.plan_and_execute_cartesian_path(waypoints=waypoints)
 
     def _grasp(self):
-        self._gripper_controller.control_gripper_sync(
+        self._gripper_controller.control_gripper(
             open=False, max_effort=0.0
         )  # 그리퍼 닫기 명령 발행
 
     def _place(self):
         # TODO: 중간 세이프티 자세로 이동 -> 내려놓는 위치로 이동
-        # 내려놓는 위치를 결정하는 코드 필요함
-        pass
+
+        # target_point에서, 5cm 앞 위치 (UR 정면의 역방향)
+        first_aim_point = self._direction.move_point(
+            point=self._target_point, distance=0.1, reverse=True
+        )
+        first_aim_pose = Pose(
+            position=first_aim_point,
+            orientation=self._ur_controller.home_pose.pose.orientation,
+        )
+
+        safety_pose: Pose = copy.deepcopy(self._ur_controller.home_pose.pose)
+        safety_pose.position.y += 0.1
+        safety_pose.position.z += 0.1
+
+        drop_position = self._drop_point
+        # Z축을 중심으로 90도 회전한 orientation 생성
+        base_orientation = self._ur_controller.home_pose.pose.orientation
+        roll, pitch, yaw = euler_from_quaternion(
+            [
+                base_orientation.x,
+                base_orientation.y,
+                base_orientation.z,
+                base_orientation.w,
+            ]
+        )
+
+        # Z축을 중심으로 90도 회전
+        yaw += np.pi / 2
+        qx, qy, qz, qw = quaternion_from_euler([roll, pitch, yaw])
+
+        drop_pose = Pose(
+            position=drop_position,
+            orientation=Quaternion(x=qx, y=qy, z=qz, w=qw),
+        )
+
+        waypoints = [first_aim_pose, drop_pose]
+
+        self._ur_controller.plan_and_execute_cartesian_path(waypoints=waypoints)
 
     def _release(self):
-        self._gripper_controller.control_gripper_sync(
+        self._gripper_controller.control_gripper(
             open=True, max_effort=0.0
         )  # 그리퍼 열기 명령 발행
 
     def _return_home(self):
 
-        # ur_controller에 정의된 safety_pose 시작
-        safety_pose: Pose = self._ur_controller.safety_pose.pose
+        self._ur_controller.moveJ(joint_states=self._ur_controller.waiting_joints)
+        # return
 
-        # ur_controller에 정의된 waiting_pose 시작
-        waiting_pose = self._ur_controller.waiting_pose.pose
+        # waiting_pose = self._ur_controller.waiting_pose.pose
 
-        waypoints = [safety_pose, waiting_pose]
+        # waypoints = [waiting_pose]
 
-        self._ur_controller.plan_and_execute_cartesian_path(waypoints=waypoints)
+        # self._ur_controller.plan_and_execute_cartesian_path(waypoints=waypoints)
 
     def step(self):
+
+        self._node.get_logger().info(f"Executing step for state: {self._state.name}")
+
         self._methods[self._state]()
 
         if self._state == self.State.RETURN_HOME:

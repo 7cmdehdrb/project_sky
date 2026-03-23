@@ -68,14 +68,20 @@ class UR5eController:
         self._node: Node = node
 
         # >>>>> Variables <<<<<
+        self._planning_group: str = (
+            "ur_manipulator"  # MoveIt2에서 설정한 UR5e의 Planning Group 이름
+        )
         self._kinematic_tolerance: float = (
             0.01  # IK 솔버의 허용 오차 (예시값, 필요에 따라 조정)
+        )
+        self._fraction_threshold: float = (
+            0.5  # Cartesian Path 계획 시 허용할 최소 경로 완성도 (예시값, 필요에 따라 조정)
         )
         self._default_frame_id: str = (
             "world"  # UR5e의 기본 프레임 ID (MoveIt2 설정에 따라 다를 수 있음)
         )
         self._end_effector_link: str = (
-            "ee_link"  # UR5e의 End Effector 링크 이름 (MoveIt2 설정에 따라 다를 수 있음)
+            "gripper_link"  # UR5e의 End Effector 링크 이름 (MoveIt2 설정에 따라 다를 수 있음)
         )
         self._home_joints = JointState(
             name=[
@@ -123,12 +129,12 @@ class UR5eController:
                 "shoulder_pan_joint",
             ],
             position=[
-                -np.pi / 18.0,
-                -np.pi * (7.0 / 18.0),
-                -np.pi,
-                -np.pi / 2.0,
-                np.pi,
-                0.0,
+                -0.14543800000017093,
+                -0.5723896666667043,
+                -2.2659790000078974,
+                -1.7612139999999918,
+                3.1378459999999997,
+                0.04616566666664836,
             ],
         )
 
@@ -152,8 +158,14 @@ class UR5eController:
         # >>>>> MoveIt2 Service Managers <<<<<
         self._fk_manager = FK_ServiceManager(node)
         self._ik_manager = IK_ServiceManager(node)
-        self._cartesian_path_manager = CartesianPath_ServiceManager(node)
-        self._kinematic_path_manager = KinematicPath_ServiceManager(node)
+        self._cartesian_path_manager = CartesianPath_ServiceManager(
+            node,
+            planning_group=self._planning_group,
+            fraction_threshold=self._fraction_threshold,
+        )
+        self._kinematic_path_manager = KinematicPath_ServiceManager(
+            node, planning_group=self._planning_group
+        )
         self._get_planning_scene_manager = GetPlanningScene_ServiceManager(node)
         self._apply_planning_scene_manager = ApplyPlanningScene_ServiceManager(node)
         self._execute_trajectory_manager = ExecuteTrajectory_ServiceManager(node)
@@ -393,6 +405,7 @@ class UR5eController:
             return merged_trajectory
 
         # 1. Planning Scene 업데이트
+        self._node.get_logger().info("Planning Scene 업데이트 중...")
         _ = self._get_and_apply_planning_scene()
 
         trajs: List[RobotTrajectory] = []
@@ -402,6 +415,10 @@ class UR5eController:
 
         # 2. waypoints에 대하여 Planning (LOOP)
         for waypoint in waypoints:
+
+            self._node.get_logger().info(
+                f"Waypoint에 대한 Cartesian Path 계획 중... (현재 시작 상태: {current_start_state.position})"
+            )
 
             # 경로 계획 (현재 설정된 current_start_state를 기반으로 시작)
             _, traj = retry_step(
@@ -413,6 +430,10 @@ class UR5eController:
                 joint_states=current_start_state,  # 여기서 current만 사용하게 됨
                 end_effector=self._end_effector_link,
             )
+            traj = self._execute_trajectory_manager.scale_trajectory(
+                trajectory=traj, scale_factor=0.3
+            )
+
             trajs.append(traj)
             traj: RobotTrajectory
 
@@ -421,25 +442,31 @@ class UR5eController:
 
             current_start_state = JointState(
                 header=self._joint_states.header,
-                name=self._joint_states.name,  # 💡 중요: JointState는 어떤 관절인지 나타내는 name 매핑이 꼭 필요합니다!
+                name=traj.joint_trajectory.joint_names,  # 💡 중요: JointState는 어떤 관절인지 나타내는 name 매핑이 꼭 필요합니다!
                 position=last_point.positions,
-                velocities=last_point.velocities,
+                velocity=last_point.velocities,
                 effort=last_point.effort,
             )
 
         # 4. Trajectory 병합
+        self._node.get_logger().info("계획된 궤적 병합 중...")
         merged_traj = merge_trajectories(trajs)
 
         # 5. Trajectory 실행
-        (
-            _,
-            _,
-        ) = retry_step(
-            step_func=self._execute_trajectory_manager.run,
-            max_retries=999,
-            delay=0.5,
+        self._node.get_logger().info("병합된 궤적 실행 중...")
+        self._execute_trajectory_manager.run(
             trajectory=merged_traj,
         )
+
+        # (
+        #     _,
+        #     _,
+        # ) = retry_step(
+        #     step_func=self._execute_trajectory_manager.run,
+        #     max_retries=999,
+        #     delay=0.5,
+        #     trajectory=merged_traj,
+        # )
 
         return True
 
@@ -458,9 +485,7 @@ class UR5eController:
         # 2. Joint State에 대하여 Planning
 
         goal_constraint: Constraints = self._kinematic_path_manager.get_goal_constraint(
-            goal_constraints=self._kinematic_path_manager.get_goal_constraint(
-                goal_joint_states=joint_states, tolerance=self._kinematic_tolerance
-            )
+            goal_joint_states=joint_states, tolerance=self._kinematic_tolerance
         )
 
         _, traj = retry_step(
@@ -491,33 +516,76 @@ class RobotiqController:
             "/gripper/robotiq_gripper_controller/gripper_cmd",
         )
 
-    def control_gripper_sync(self, open: bool = True, max_effort: float = 0.0) -> bool:
-        """동기식으로 그리퍼를 제어하고, 물리적 동작이 끝날 때까지 대기합니다."""
+        # 메인 루프(State Machine)에서 상태를 체크하기 위한 내부 플래그
+        self._is_finished = False
+        self._is_success = False
+        self._final_position = 0.0
+
+    def control_gripper(self, open: bool = True, max_effort: float = 0.0):
+        """[비동기] 그리퍼 제어 명령을 전송하고, 즉시 리턴하여 블로킹을 방지합니다."""
         position = 0.0 if open else 0.8
         goal_msg = GripperCommand.Goal()
         goal_msg.command.position = position
         goal_msg.command.max_effort = max_effort
 
-        self._node.get_logger().info("Action Server 대기 중...")
+        self._node.get_logger().info("Action Server 연결 대기 중...")
         self._action_client.wait_for_server()
 
-        # 1. Goal 전송 및 수락(Accept) 대기
-        goal_future = self._action_client.send_goal_async(goal_msg)
-        rclpy.spin_until_future_complete(self._node, goal_future)
+        # 새로운 명령을 보내기 전 플래그 초기화
+        self._is_finished = False
+        self._is_success = False
+        self._final_position = 0.0
 
-        goal_handle: ClientGoalHandle = goal_future.result()
+        self._node.get_logger().info(
+            f"▶️ 그리퍼 {'열기' if open else '닫기'} 명령 전송 중..."
+        )
+
+        # 1. 비동기 Goal 전송 및 콜백 연결 (여기서 코드 실행이 멈추지 않고 바로 넘어갑니다)
+        future: Future = self._action_client.send_goal_async(goal_msg)
+        future.add_done_callback(self._goal_response_callback)
+
+    def _goal_response_callback(self, future: Future):
+        """Goal 수락/거절 여부를 처리하는 콜백"""
+        goal_handle = future.result()
+
         if not goal_handle.accepted:
-            self._node.get_logger().error("서버가 Goal을 거절했습니다.")
-            return False
+            self._node.get_logger().error("❌ 서버가 Goal을 거절했습니다.")
+            self._is_finished = True
+            self._is_success = False
+            return
 
-        self._node.get_logger().info("Goal 수락됨. 물리적 동작 완료 대기 중...")
+        self._node.get_logger().info("🟢 Goal 수락됨! 물리적 동작 완료 대기 중...")
 
-        # 2. 🌟 물리적 동작 완료(Result) 대기 🌟
-        # 이 부분이 실제 로봇 움직임이 끝날 때까지 코드를 잡아두는 핵심입니다.
+        # 2. Result(물리적 동작 완료)를 기다리는 비동기 요청 및 콜백 연결
         result_future: Future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self._node, result_future)
+        result_future.add_done_callback(self._get_result_callback)
 
-        action_result: GripperCommand.Result = result_future.result().result
-        self._node.get_logger().info(f"동작 완료! 최종 위치: {action_result.position}")
+    def _get_result_callback(self, future: Future):
+        """최종 동작이 완료되었을 때 실행되는 콜백"""
+        result = future.result().result
+        self._final_position = result.position
 
-        return True
+        self._node.get_logger().info(f"✅ 동작 완료! 최종 위치: {self._final_position}")
+
+        # 메인 상태 머신이 다음 단계로 넘어갈 수 있도록 플래그 업데이트
+        self._is_success = True
+        self._is_finished = True
+
+    # ==========================================
+    # 상태 머신(State Machine)에서 읽어갈 프로퍼티들
+    # ==========================================
+    @property
+    def is_finished(self) -> bool:
+        """액션이 완전히 끝났는지(성공/실패 무관) 확인합니다."""
+        # 1회 읽고 나면 자동으로 초기화하게 하려면 여기서 self._is_finished = False 처리를 해도 좋습니다.
+        return self._is_finished
+
+    @property
+    def is_success(self) -> bool:
+        """액션이 성공적으로 수행되었는지 확인합니다."""
+        return self._is_success
+
+    @property
+    def final_position(self) -> float:
+        """동작 완료 후 그리퍼의 최종 위치를 반환합니다."""
+        return self._final_position

@@ -21,7 +21,7 @@ class PolicyServiceNode(Node):
         self.cb_group = ReentrantCallbackGroup()
 
         # 모델 경로 수정 필요
-        model_path = "/home/irol/project_sky/src/fcn_network/resource/exported2/policy.onnx"
+        model_path = "/home/min/7cmdehdrb/project_sky/src/fcn_network/resource/exported2/policy.onnx"
         self.policy_manager = RLPolicyManager(model_path)
 
         # 1. 구독 (Observations)
