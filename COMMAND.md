@@ -24,6 +24,21 @@ python3 src/object_tracker/object_tracker/yolo_node.py
 python3 src/object_tracker/object_tracker/closest_object_node.py
 `
 
+`
+python3 src/test/integration_image_node.py
+`
+
+## FOR TEST
+
+`
+python3 src/object_tracker/object_tracker/unused/fake_camera_publisher.py
+`
+
+`
+python3 src/object_tracker/object_tracker/unused/fake_depth_publisher.py
+`
+
+
 ## FCN
 `
 python3 src/fcn_network/fcn_network/grid_node.py
@@ -37,7 +52,7 @@ python3 src/fcn_network/fcn_network/fcn_node.py
 python3 src/fcn_network/fcn_network/drl_node.py
 `
 `
-python3 python3 src/fcn_network/fcn_network/drop_grid_node.py
+python3 src/fcn_network/fcn_network/drop_grid_node.py
 `
 
 ## TEST

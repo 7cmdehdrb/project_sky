@@ -99,13 +99,6 @@ class DRLClient:
             self._node.get_logger().error(f"❌ [{self.req_cnt}]번째 요청 실패: {e}")
             return None
 
-    def _post_process_response(
-        self, response: GetPolicyAction.Response
-    ) -> GetPolicyAction.Response:
-        # 응답 후처리 로직 (예시: 좌표 변환)
-
-        pass
-
 
 class TargetObjectPicker:
     def __init__(self, node: Node, transform_manager: TransformManager):
@@ -201,7 +194,7 @@ class DropGridSyncClient:
 
             if result.success:
                 self._node.get_logger().info(
-                    f"✅ 다음 드롭 셀 응답 수신: Row ID = {result.row_id}, Col ID = {result.col_id}, Position = ({result.center_coord.x:.2f}, {result.center_coord.y:.2f}, {result.center_coord.z:.2f}), Frame ID = {result.frame_id}"
+                    f"✅ 다음 드롭 셀 응답 수신: Row ID = {result.row_id}, Col ID = {result.col_id}"
                 )
             else:
                 self._node.get_logger().warn("빈 그리드가 없습니다 (모든 셀이 채워짐).")
@@ -289,6 +282,12 @@ class MainControlNode(Node):
             0  # TODO: 테스트 용도, 실제로는 DRL 모듈에서 받아온 action_type 사용
         )
 
+        import random
+
+        self._target_column: int = random.randint(
+            0, 3
+        )  # TODO: 테스트 용도, 실제로는 DRL 모듈에서 받아온 target_column 사용
+
         if self._action_type == 0:
             # Drop 해야 하기에, 다음 드롭 셀 정보 요청 -> ActionSequence에 타겟 포인트로 전달
             """
@@ -303,14 +302,11 @@ class MainControlNode(Node):
                 self._drop_client.request_next_drop_cell_sync()
             )
 
-            pose = Pose(
-                position=res.center_coord,
-                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
-            )
+            pose = res.center_coord.pose
             transformed_pose = self._transform_manager.transform_pose(
                 pose=pose,
                 target_frame="world",
-                source_frame=res.frame_id,
+                source_frame=res.center_coord.header.frame_id,
             )
 
             self._drop_cell = transformed_pose.pose.position

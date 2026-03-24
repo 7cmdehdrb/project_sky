@@ -62,6 +62,41 @@ class AxisDirection(Enum):
         return new_pose
 
 
+def rotate_direction_z(current_dir: AxisDirection, angle_deg: int) -> AxisDirection:
+    """
+    현재 정면 방향을 Z축 기준으로 회전한 후의 새로운 방향을 반환합니다.
+
+    :param current_dir: 현재의 AxisDirection
+    :param angle_deg: Z축 기준 회전 각도 (90 또는 -90)
+    :return: 회전 후의 AxisDirection
+    """
+    if angle_deg not in (90, -90):
+        raise ValueError("회전 각도는 90도 또는 -90도만 지원합니다.")
+
+    # Z축 방향을 바라보고 있다면, Z축 회전을 해도 방향은 변하지 않음
+    if current_dir in (AxisDirection.POS_Z, AxisDirection.NEG_Z):
+        return current_dir
+
+    if angle_deg == 90:
+        # +90도 (반시계 방향, CCW) 회전
+        rotation_map = {
+            AxisDirection.POS_X: AxisDirection.POS_Y,
+            AxisDirection.POS_Y: AxisDirection.NEG_X,
+            AxisDirection.NEG_X: AxisDirection.NEG_Y,
+            AxisDirection.NEG_Y: AxisDirection.POS_X,
+        }
+    else:  # angle_deg == -90
+        # -90도 (시계 방향, CW) 회전
+        rotation_map = {
+            AxisDirection.POS_X: AxisDirection.NEG_Y,
+            AxisDirection.NEG_Y: AxisDirection.NEG_X,
+            AxisDirection.NEG_X: AxisDirection.POS_Y,
+            AxisDirection.POS_Y: AxisDirection.POS_X,
+        }
+
+    return rotation_map[current_dir]
+
+
 class ActionSequence:
     """
     전체 액션을 총괄하는 부모 시퀸스 클래스.
@@ -88,10 +123,11 @@ class ActionSequence:
         self._ur_controller: UR5eController = ur_controller
         self._gripper_controller: RobotiqController = gripper_controller
         self._target_point: Point = target_point
+        self._direction: AxisDirection = direction
+
         self._drop_point: Point = (
             target_point  # 드롭 위치는 일단 target_point로 설정, 필요에 따라 별도 설정 가능
         )
-        self._direction: AxisDirection = direction
         self._waypoints: List[Pose] = []  # 액션 수행을 위한 경로의 waypoints 리스트
 
         self._state = self.State.HOME  # 초기 상태는 HOME
@@ -196,89 +232,92 @@ class GraspActionSequence(ActionSequence):
         """
         잡기 위한 자세로 이동
         1) 홈 포즈에서 약간 떨어진 중간 세이프티 자세로 이동
-        2) target_point 앞 (예: 5cm) 위치로 이동
+        2) target_point 앞 (예: 10cm) 위치로 이동
         3) target_point 더 가까운 앞 (예: 2cm) 위치로 이동
         4) target_point 위치로 이동 (그리퍼 중심 == 물체 중심)
          - 위의 1~4는 모두 waypoints(List[Pose])로 결정
         """
 
         # ur_controller에 정의된 safety_pose 시작
-        # safety_pose: Pose = self._ur_controller.safety_pose.pose
-        safety_pose: Pose = copy.deepcopy(self._ur_controller.home_pose.pose)
-        safety_pose.position.y += 0.1
-        safety_pose.position.z += 0.1
+        safety_pose: Pose = self._ur_controller.safety_pose.pose
 
-        # target_point에서, 5cm 앞 위치 (UR 정면의 역방향)
-        first_aim_point = self._direction.move_point(
-            point=self._target_point, distance=0.1, reverse=True
-        )
+        # target_point에서, 10cm 앞 위치 (UR 정면의 역방향)
         first_aim_pose = Pose(
-            position=first_aim_point,
+            position=self._direction.move_point(
+                point=self._target_point, distance=0.1, reverse=True
+            ),
             orientation=self._ur_controller.home_pose.pose.orientation,
         )
 
         # target_point에서, 2cm 앞 위치 (UR 정면의 역방향)
-        second_aim_point = self._direction.move_point(
-            point=self._target_point, distance=0.02, reverse=True
-        )
         second_aim_pose = Pose(
-            position=second_aim_point,
+            position=self._direction.move_point(
+                point=self._target_point, distance=0.02, reverse=True
+            ),
             orientation=self._ur_controller.home_pose.pose.orientation,
         )
 
         # target_point 위치 (그리퍼 중심 == 물체 중심)
+        # Orientation 은 홈 자세와 동일하게 유지 (필요에 따라 조정 가능)
         target_pose = Pose(
             position=self._target_point,
-            orientation=self._ur_controller.home_pose.pose.orientation,
+            orientation=self._ur_controller.home_orientation,
         )
 
-        waypoints = [safety_pose, first_aim_pose, second_aim_pose, target_pose]
-
-        self._ur_controller.plan_and_execute_cartesian_path(waypoints=waypoints)
+        self._ur_controller.plan_and_execute_cartesian_path(
+            waypoints=[safety_pose, first_aim_pose, second_aim_pose, target_pose]
+        )
 
     def _grasp(self):
         self._gripper_controller.control_gripper(
             open=False, max_effort=0.0
         )  # 그리퍼 닫기 명령 발행
+        time.sleep(1.0)  # 그리퍼가 닫히는 시간 대기 (필요에 따라 조정)
 
     def _place(self):
         # TODO: 중간 세이프티 자세로 이동 -> 내려놓는 위치로 이동
 
-        # target_point에서, 5cm 앞 위치 (UR 정면의 역방향)
-        first_aim_point = self._direction.move_point(
-            point=self._target_point, distance=0.1, reverse=True
-        )
-        first_aim_pose = Pose(
-            position=first_aim_point,
+        second_aim_pose = Pose(
+            position=self._direction.move_point(
+                point=self._target_point, distance=0.02, reverse=True
+            ),
             orientation=self._ur_controller.home_pose.pose.orientation,
         )
 
-        safety_pose: Pose = copy.deepcopy(self._ur_controller.home_pose.pose)
-        safety_pose.position.y += 0.1
-        safety_pose.position.z += 0.1
-
-        drop_position = self._drop_point
-        # Z축을 중심으로 90도 회전한 orientation 생성
-        base_orientation = self._ur_controller.home_pose.pose.orientation
-        roll, pitch, yaw = euler_from_quaternion(
-            [
-                base_orientation.x,
-                base_orientation.y,
-                base_orientation.z,
-                base_orientation.w,
-            ]
+        # target_point에서, 10cm 앞 위치 (UR 정면의 역방향)
+        first_aim_pose = Pose(
+            position=self._direction.move_point(
+                point=self._target_point, distance=0.1, reverse=True
+            ),
+            orientation=self._ur_controller.home_pose.pose.orientation,
         )
 
-        # Z축을 중심으로 90도 회전
-        yaw += np.pi / 2
-        qx, qy, qz, qw = quaternion_from_euler([roll, pitch, yaw])
+        safety_pose: Pose = self._ur_controller.safety_pose.pose
+
+        # Drop_point에서, 10cm 앞 위치
+
+        drop_point: Point = self._drop_point
+        drop_orientation: Quaternion = self._ur_controller.drop_orientation
 
         drop_pose = Pose(
-            position=drop_position,
-            orientation=Quaternion(x=qx, y=qy, z=qz, w=qw),
+            position=drop_point,
+            orientation=drop_orientation,
         )
 
-        waypoints = [first_aim_pose, drop_pose]
+        first_drop_axis = rotate_direction_z(
+            current_dir=self._direction, angle_deg=int(90)
+        )
+        first_drop_pose = first_drop_axis.move_pose(
+            pose=drop_pose, distance=0.05, reverse=True
+        )
+
+        # Picking 자세 -> 10cm 뒤로 이동 -> 안전 자세 -> Drop_pose의 10cm 앞 -> Drop_pose
+        waypoints = [
+            second_aim_pose,
+            first_aim_pose,
+            first_drop_pose,
+            drop_pose,
+        ]
 
         self._ur_controller.plan_and_execute_cartesian_path(waypoints=waypoints)
 
@@ -286,17 +325,30 @@ class GraspActionSequence(ActionSequence):
         self._gripper_controller.control_gripper(
             open=True, max_effort=0.0
         )  # 그리퍼 열기 명령 발행
+        time.sleep(1.0)  # 그리퍼가 열리는 시간 대기 (필요에 따라 조정)
 
     def _return_home(self):
 
+        drop_point: Point = self._drop_point
+        drop_orientation: Quaternion = self._ur_controller.drop_orientation
+
+        drop_pose = Pose(
+            position=drop_point,
+            orientation=drop_orientation,
+        )
+
+        first_drop_axis = rotate_direction_z(
+            current_dir=self._direction, angle_deg=int(90)
+        )
+        first_drop_pose = first_drop_axis.move_pose(
+            pose=drop_pose, distance=0.05, reverse=True
+        )
+
+        self._ur_controller.plan_and_execute_cartesian_path(waypoints=[first_drop_pose])
+
         self._ur_controller.moveJ(joint_states=self._ur_controller.waiting_joints)
-        # return
 
-        # waiting_pose = self._ur_controller.waiting_pose.pose
-
-        # waypoints = [waiting_pose]
-
-        # self._ur_controller.plan_and_execute_cartesian_path(waypoints=waypoints)
+        return None
 
     def step(self):
 

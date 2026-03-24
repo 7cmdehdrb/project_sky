@@ -4,11 +4,10 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_system_default
 
 # ROS2 Messages
-from std_msgs.msg import Header
-from sensor_msgs.msg import PointCloud2
-from visualization_msgs.msg import MarkerArray
-from std_msgs.msg import Float32MultiArray
-from geometry_msgs.msg import Point, Vector3
+from std_msgs.msg import *
+from sensor_msgs.msg import *
+from visualization_msgs.msg import *
+from geometry_msgs.msg import *
 from custom_msgs.srv import GetNextDropCell
 
 # 구현하신 클래스 임포트 (경로는 패키지 구조에 맞게 수정하세요)
@@ -69,8 +68,16 @@ class DropGridNode(Node):
         response.success = True
         response.row_id = target_cell.row
         response.col_id = target_cell.col
-        response.frame_id = "camera1_link"
-        response.center_coord = target_cell.position
+        response.center_coord = PoseStamped(
+            header=Header(
+                stamp=self.get_clock().now().to_msg(),
+                frame_id="camera1_link",  # 실제 프레임에 맞게 수정하세요
+            ),
+            pose=Pose(
+                position=target_cell.position,
+                orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),  # 필요에 따라 수정
+            ),
+        )
         response.size = target_cell.size
 
         # 3. drop 콜하여 상태를 '점유'로 변경 및 다음 인덱스로 진행
@@ -81,8 +88,6 @@ class DropGridNode(Node):
         return response
 
     def publish_grid_markers(self):
-
-        self.get_logger().info("그리드 마커를 발행합니다...")
 
         header = Header(
             stamp=self.get_clock().now().to_msg(),

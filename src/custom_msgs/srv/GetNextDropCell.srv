@@ -4,6 +4,5 @@
 bool success
 string row_id
 int32 col_id
-string frame_id
-geometry_msgs/Point center_coord
+geometry_msgs/PoseStamped center_coord
 geometry_msgs/Vector3 size

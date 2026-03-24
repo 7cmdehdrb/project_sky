@@ -30,6 +30,7 @@ from enum import Enum
 import time
 import threading
 import copy
+from rotutils import *
 from dataclasses import dataclass
 
 # Custom
@@ -75,7 +76,7 @@ class UR5eController:
             0.01  # IK 솔버의 허용 오차 (예시값, 필요에 따라 조정)
         )
         self._fraction_threshold: float = (
-            0.5  # Cartesian Path 계획 시 허용할 최소 경로 완성도 (예시값, 필요에 따라 조정)
+            0.1  # Cartesian Path 계획 시 허용할 최소 경로 완성도 (예시값, 필요에 따라 조정)
         )
         self._default_frame_id: str = (
             "world"  # UR5e의 기본 프레임 ID (MoveIt2 설정에 따라 다를 수 있음)
@@ -83,7 +84,14 @@ class UR5eController:
         self._end_effector_link: str = (
             "gripper_link"  # UR5e의 End Effector 링크 이름 (MoveIt2 설정에 따라 다를 수 있음)
         )
+        # <<<<< End of Variables <<<<<
+
+        # >>>>> Predefined Joint States <<<<<
         self._home_joints = JointState(
+            header=Header(
+                stamp=self._node.get_clock().now().to_msg(),
+                frame_id="base_link",
+            ),
             name=[
                 "shoulder_lift_joint",
                 "elbow_joint",
@@ -102,6 +110,10 @@ class UR5eController:
             ],
         )
         self._safety_joints = JointState(
+            header=Header(
+                stamp=self._node.get_clock().now().to_msg(),
+                frame_id="base_link",
+            ),
             name=[
                 "shoulder_lift_joint",
                 "elbow_joint",
@@ -111,15 +123,19 @@ class UR5eController:
                 "shoulder_pan_joint",
             ],
             position=[
-                -0.8533289450337911,
-                -2.2019173476285356,
-                -3.243817707337641,
-                -np.pi / 2.0,
-                np.pi,
-                -1.6112989998426164,
+                -0.7980526937250012,
+                -2.2779344915978577,
+                -3.22939911761183,
+                -0.6398843295933805,
+                3.150328623414728,
+                -0.6956096575289052,
             ],
         )
         self._waiting_joints = JointState(
+            header=Header(
+                stamp=self._node.get_clock().now().to_msg(),
+                frame_id="base_link",
+            ),
             name=[
                 "shoulder_lift_joint",
                 "elbow_joint",
@@ -137,6 +153,7 @@ class UR5eController:
                 0.04616566666664836,
             ],
         )
+        # <<<<< End of Predefined Joint States <<<<<
 
         # >>>>> ROS Subscribers <<<<<
         self._joint_states: JointState = None
@@ -172,18 +189,22 @@ class UR5eController:
 
     @property
     def joint_states(self) -> JointState:
+        self._joint_states.header.stamp = self._node.get_clock().now().to_msg()
         return self._joint_states
 
     @property
     def home_joints(self) -> JointState:
+        self._home_joints.header.stamp = self._node.get_clock().now().to_msg()
         return self._home_joints
 
     @property
     def safety_joints(self) -> JointState:
+        self._safety_joints.header.stamp = self._node.get_clock().now().to_msg()
         return self._safety_joints
 
     @property
     def waiting_joints(self) -> JointState:
+        self._waiting_joints.header.stamp = self._node.get_clock().now().to_msg()
         return self._waiting_joints
 
     @property
@@ -208,6 +229,50 @@ class UR5eController:
         return self._fk_manager.run(
             joint_states=self._waiting_joints,
             end_effector=self._end_effector_link,
+        )
+
+    @property
+    def home_orientation(self) -> Quaternion:
+        home_pose = self.home_pose
+        if home_pose is not None:
+            return home_pose.pose.orientation
+        else:
+            self._node.get_logger().warn(
+                "홈 자세의 TCP Pose를 계산할 수 없습니다. 기본 orientation을 반환합니다."
+            )
+            return Quaternion(
+                x=0.0, y=0.0, z=0.0, w=1.0
+            )  # 기본 단위 쿼터니언 (회전 없음)
+
+    @property
+    def drop_orientation(self) -> Quaternion:
+        home_orientation = self.home_orientation
+
+        h_roll, h_pitch, h_yaw = euler_from_quaternion(
+            [
+                home_orientation.x,
+                home_orientation.y,
+                home_orientation.z,
+                home_orientation.w,
+            ]
+        )
+
+        sx, sy, sz, sw = quaternion_from_euler(
+            [
+                h_roll,
+                h_pitch,
+                h_yaw
+                + np.deg2rad(
+                    90.0
+                ),  # safety_joints에서 yaw 방향으로 90도 회전한 orientation 계산
+            ]
+        )
+
+        return Quaternion(
+            x=sx,
+            y=sy,
+            z=sz,
+            w=sw,
         )
 
     @property
@@ -414,10 +479,10 @@ class UR5eController:
         current_start_state = self._joint_states
 
         # 2. waypoints에 대하여 Planning (LOOP)
-        for waypoint in waypoints:
+        for i, waypoint in enumerate(waypoints):
 
             self._node.get_logger().info(
-                f"Waypoint에 대한 Cartesian Path 계획 중... (현재 시작 상태: {current_start_state.position})"
+                f"Waypoint {i + 1}/{len(waypoints)}에 대한 경로 계획 중..."
             )
 
             # 경로 계획 (현재 설정된 current_start_state를 기반으로 시작)
@@ -430,9 +495,9 @@ class UR5eController:
                 joint_states=current_start_state,  # 여기서 current만 사용하게 됨
                 end_effector=self._end_effector_link,
             )
-            traj = self._execute_trajectory_manager.scale_trajectory(
-                trajectory=traj, scale_factor=0.3
-            )
+            # traj = self._execute_trajectory_manager.scale_trajectory(
+            #     trajectory=traj, scale_factor=0.5
+            # )
 
             trajs.append(traj)
             traj: RobotTrajectory
@@ -449,7 +514,6 @@ class UR5eController:
             )
 
         # 4. Trajectory 병합
-        self._node.get_logger().info("계획된 궤적 병합 중...")
         merged_traj = merge_trajectories(trajs)
 
         # 5. Trajectory 실행
@@ -457,16 +521,6 @@ class UR5eController:
         self._execute_trajectory_manager.run(
             trajectory=merged_traj,
         )
-
-        # (
-        #     _,
-        #     _,
-        # ) = retry_step(
-        #     step_func=self._execute_trajectory_manager.run,
-        #     max_retries=999,
-        #     delay=0.5,
-        #     trajectory=merged_traj,
-        # )
 
         return True
 
@@ -497,10 +551,7 @@ class UR5eController:
             joint_states=self._joint_states,
         )
 
-        _, _ = retry_step(
-            step_func=self._execute_trajectory_manager.run,
-            max_retries=999,
-            delay=0.5,
+        self._execute_trajectory_manager.run(
             trajectory=traj,
         )
 
@@ -565,7 +616,7 @@ class RobotiqController:
         result = future.result().result
         self._final_position = result.position
 
-        self._node.get_logger().info(f"✅ 동작 완료! 최종 위치: {self._final_position}")
+        # self._node.get_logger().info(f"✅ 동작 완료! 최종 위치: {self._final_position}")
 
         # 메인 상태 머신이 다음 단계로 넘어갈 수 있도록 플래그 업데이트
         self._is_success = True
