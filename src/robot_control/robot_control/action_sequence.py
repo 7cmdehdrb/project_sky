@@ -130,6 +130,10 @@ class ActionSequence:
         )
         self._waypoints: List[Pose] = []  # 액션 수행을 위한 경로의 waypoints 리스트
 
+        self._methods = (
+            {}
+        )  # 상태별 실행 메서드를 저장하는 딕셔너리, 자식 클래스에서 채워질 예정
+
         self._state = self.State.HOME  # 초기 상태는 HOME
 
     @property
@@ -138,6 +142,7 @@ class ActionSequence:
 
     @target_point.setter
     def target_point(self, value: Point | np.ndarray | Tuple[float, float, float]):
+        self._node.get_logger().info(f"Setting target_point to: {value}")
         if isinstance(value, Point):
             self._target_point = value
         elif isinstance(value, np.ndarray) and value.shape == (3,):
@@ -169,19 +174,18 @@ class ActionSequence:
             raise ValueError("Waypoints must be a list of Pose objects.")
         self._waypoints = value
 
-    @abstractmethod
     def step(self):
-        """
-        내부 State에 의한 step 단위로 액션을 수행하는 메서드
-        예를 들면, Grasp라면 이러한 구조를 가지게 됨
-            - 홈 포즈로 이동
-            - 잡기 위한 포즈로 이동
-            - 그리퍼 닫기
-            - 내려놓는 포즈로 이동
-            - 그리퍼 열기
-            - 홈 포즈로 이동
-        """
-        raise NotImplementedError("Subclasses must implement the step() method.")
+        self._node.get_logger().info(f"Executing step for state: {self._state.name}")
+
+        self._methods[self._state]()
+
+        if self._state.value + 1 >= len(self._methods):
+            #  현재 상태가 마지막 상태인 경우, 다음 step에서 다시 HOME부터 시작하도록 초기화
+            self._state = self.State(0)
+            return True  # 액션 시퀸스 종료 신호
+        else:
+            self._state = self.State(self._state.value + 1)
+            return False  # 액션 시퀸스 진행 중 신호
 
 
 class GraspActionSequence(ActionSequence):
@@ -200,7 +204,7 @@ class GraspActionSequence(ActionSequence):
         ur_controller: UR5eController,
         gripper_controller: RobotiqController,
         target_point: Point,
-        direction: AxisDirection = AxisDirection.POS_X,
+        direction: AxisDirection = AxisDirection.POS_Y,
     ):
         super().__init__(
             node, ur_controller, gripper_controller, target_point, direction
@@ -224,9 +228,8 @@ class GraspActionSequence(ActionSequence):
         """
 
         self._ur_controller.moveJ(joint_states=self._ur_controller.home_joints)
-        self._gripper_controller.control_gripper(
-            open=True, max_effort=0.0
-        )  # 그리퍼 열기 명령 발행
+        self._gripper_controller.control_gripper(open=True, max_effort=0.0)
+        time.sleep(1.0)  # 그리퍼 대기 시간
 
     def _approach(self):
         """
@@ -241,133 +244,115 @@ class GraspActionSequence(ActionSequence):
         # ur_controller에 정의된 safety_pose 시작
         safety_pose: Pose = self._ur_controller.safety_pose.pose
 
-        # target_point에서, 10cm 앞 위치 (UR 정면의 역방향)
+        # target_point에서 떨어진 앞 위치 (UR 정면의 역방향)
         first_aim_pose = Pose(
             position=self._direction.move_point(
                 point=self._target_point, distance=0.1, reverse=True
             ),
-            orientation=self._ur_controller.home_pose.pose.orientation,
+            orientation=self._ur_controller.home_orientation,
         )
 
-        # target_point에서, 2cm 앞 위치 (UR 정면의 역방향)
+        # target_point에서, 조금 떨어진 앞 위치 (UR 정면의 역방향)
         second_aim_pose = Pose(
             position=self._direction.move_point(
                 point=self._target_point, distance=0.02, reverse=True
             ),
-            orientation=self._ur_controller.home_pose.pose.orientation,
+            orientation=self._ur_controller.home_orientation,
         )
 
-        # target_point 위치 (그리퍼 중심 == 물체 중심)
-        # Orientation 은 홈 자세와 동일하게 유지 (필요에 따라 조정 가능)
+        # target_point 위치 (그리퍼 중심 == 물체 중심), Orientation 은 홈 자세와 동일하게 유지
         target_pose = Pose(
             position=self._target_point,
             orientation=self._ur_controller.home_orientation,
         )
 
-        self._ur_controller.plan_and_execute_cartesian_path(
+        self._ur_controller.plan_and_execute_kinematic_path(
             waypoints=[safety_pose, first_aim_pose, second_aim_pose, target_pose]
         )
 
     def _grasp(self):
-        self._gripper_controller.control_gripper(
-            open=False, max_effort=0.0
-        )  # 그리퍼 닫기 명령 발행
-        time.sleep(1.0)  # 그리퍼가 닫히는 시간 대기 (필요에 따라 조정)
+        self._gripper_controller.control_gripper(open=False, max_effort=0.0)
+        time.sleep(1.0)  # 그리퍼가 대기 시간
 
     def _place(self):
-        # TODO: 중간 세이프티 자세로 이동 -> 내려놓는 위치로 이동
-
+        # target_point에서, 조금 떨어진 앞 위치 (UR 정면의 역방향)
         second_aim_pose = Pose(
             position=self._direction.move_point(
                 point=self._target_point, distance=0.02, reverse=True
             ),
-            orientation=self._ur_controller.home_pose.pose.orientation,
+            orientation=self._ur_controller.home_orientation,
         )
 
-        # target_point에서, 10cm 앞 위치 (UR 정면의 역방향)
+        # target_point에서, 떨어진 앞 위치 (UR 정면의 역방향)
         first_aim_pose = Pose(
             position=self._direction.move_point(
-                point=self._target_point, distance=0.1, reverse=True
+                point=self._target_point, distance=0.05, reverse=True
             ),
-            orientation=self._ur_controller.home_pose.pose.orientation,
+            orientation=self._ur_controller.home_orientation,
         )
 
-        safety_pose: Pose = self._ur_controller.safety_pose.pose
-
-        # Drop_point에서, 10cm 앞 위치
-
-        drop_point: Point = self._drop_point
-        drop_orientation: Quaternion = self._ur_controller.drop_orientation
-
+        # Position은 drop_point, Orientation은 홈 자세 +90도
         drop_pose = Pose(
-            position=drop_point,
-            orientation=drop_orientation,
+            position=self._drop_point,
+            orientation=self._ur_controller.drop_orientation,
         )
 
-        first_drop_axis = rotate_direction_z(
+        # Drop pose에서 0.05m 뒤로 이동한 위치 (UR -> Drop Grid 역방향)
+        first_drop_pose = rotate_direction_z(
             current_dir=self._direction, angle_deg=int(90)
-        )
-        first_drop_pose = first_drop_axis.move_pose(
-            pose=drop_pose, distance=0.05, reverse=True
-        )
+        ).move_pose(pose=drop_pose, distance=0.05, reverse=True)
 
-        # Picking 자세 -> 10cm 뒤로 이동 -> 안전 자세 -> Drop_pose의 10cm 앞 -> Drop_pose
-        waypoints = [
-            second_aim_pose,
-            first_aim_pose,
-            first_drop_pose,
-            drop_pose,
-        ]
-
-        self._ur_controller.plan_and_execute_cartesian_path(waypoints=waypoints)
+        self._ur_controller.plan_and_execute_kinematic_path(
+            waypoints=[
+                second_aim_pose,
+                first_aim_pose,
+                first_drop_pose,
+                drop_pose,
+            ]
+        )
 
     def _release(self):
-        self._gripper_controller.control_gripper(
-            open=True, max_effort=0.0
-        )  # 그리퍼 열기 명령 발행
-        time.sleep(1.0)  # 그리퍼가 열리는 시간 대기 (필요에 따라 조정)
+        self._gripper_controller.control_gripper(open=True, max_effort=0.0)
+        time.sleep(1.0)  # 그리퍼가 대기 시간
 
     def _return_home(self):
 
-        drop_point: Point = self._drop_point
-        drop_orientation: Quaternion = self._ur_controller.drop_orientation
-
+        # 참조용
         drop_pose = Pose(
-            position=drop_point,
-            orientation=drop_orientation,
+            position=self._drop_point,
+            orientation=self._ur_controller.drop_orientation,
         )
 
-        first_drop_axis = rotate_direction_z(
+        # Drop pose에서 0.05m 뒤로 이동한 위치 (UR -> Drop Grid 역방향)
+        first_drop_pose = rotate_direction_z(
             current_dir=self._direction, angle_deg=int(90)
-        )
-        first_drop_pose = first_drop_axis.move_pose(
-            pose=drop_pose, distance=0.05, reverse=True
-        )
+        ).move_pose(pose=drop_pose, distance=0.05, reverse=True)
 
-        self._ur_controller.plan_and_execute_cartesian_path(waypoints=[first_drop_pose])
+        self._ur_controller.plan_and_execute_kinematic_path(waypoints=[first_drop_pose])
 
+        # 대기 자세로 이동
         self._ur_controller.moveJ(joint_states=self._ur_controller.waiting_joints)
 
         return None
 
-    def step(self):
+    # def step(self):
 
-        self._node.get_logger().info(f"Executing step for state: {self._state.name}")
+    #     self._node.get_logger().info(f"Executing step for state: {self._state.name}")
 
-        self._methods[self._state]()
+    #     self._methods[self._state]()
 
-        if self._state == self.State.RETURN_HOME:
-            self._state = (
-                self.State.HOME
-            )  # 다음 액션 시퀸스에서도 HOME부터 시작하도록 초기화
-            return True  # 액션 시퀸스 종료 신호
+    #     if self._state == self.State.RETURN_HOME:
+    #         self._state = (
+    #             self.State.HOME
+    #         )  # 다음 액션 시퀸스에서도 HOME부터 시작하도록 초기화
+    #         return True  # 액션 시퀸스 종료 신호
 
-        else:
-            self._state = self.State(self._state.value + 1)
-            return False  # 액션 시퀸스 진행 중 신호
+    #     else:
+    #         self._state = self.State(self._state.value + 1)
+    #         return False  # 액션 시퀸스 진행 중 신호
 
 
-class SweepLeftActionSequence(ActionSequence):
+class SweepActionSequence(ActionSequence):
 
     class State(Enum):
         HOME = 0  # 시작 자세로 이동
@@ -381,35 +366,18 @@ class SweepLeftActionSequence(ActionSequence):
         ur_controller: UR5eController,
         gripper_controller: RobotiqController,
         target_point: Point,
-        direction: AxisDirection = AxisDirection.POS_X,
+        direction: AxisDirection = AxisDirection.POS_Y,
+        sweep_direction: AxisDirection = AxisDirection.NEG_X,
+        sweep_distance: float = 0.1,
+        offset_distance: float = 0.02,
     ):
         super().__init__(
             node, ur_controller, gripper_controller, target_point, direction
         )
 
-    def step(self):
-        pass
-
-
-class SweepRightActionSequence(ActionSequence):
-
-    class State(Enum):
-        HOME = 0  # 시작 자세로 이동
-        APPROACH = 1  # Right 임으로, 물체 왼쪽으로 근접
-        SWEEP = 2  # Sweep Right 수행
-        RETURN_HOME = 3  # 홈 자세로 이동. waypoints에 의하여 여러번 이동될 수 있음
-
-    def __init__(
-        self,
-        node: Node,
-        ur_controller: UR5eController,
-        gripper_controller: RobotiqController,
-        target_point: Point,
-        direction: AxisDirection = AxisDirection.POS_X,
-    ):
-        super().__init__(
-            node, ur_controller, gripper_controller, target_point, direction
-        )
+        self._sweep_direction = sweep_direction
+        self._sweep_distance = sweep_distance
+        self._offset_distance = offset_distance
 
         self._methods = {
             self.State.HOME: self._home,
@@ -421,27 +389,91 @@ class SweepRightActionSequence(ActionSequence):
     def _home(self):
         """
         홈 자세로 이동 및 실행
+        1) ur_controller를 이용하여 홈 자세로 이동하는 경로 계획 및 실행
+        2) gripper_controller를 이용하여 그리퍼 열기 명령 발행
         """
-        pass
+
+        self._ur_controller.moveJ(joint_states=self._ur_controller.home_joints)
+        self._gripper_controller.control_gripper(open=True, max_effort=0.0)
+        time.sleep(1.0)  # 그리퍼 대기 시간
 
     def _approach(self):
-        pass
+        """
+        잡기 위한 자세로 이동
+        1) 홈 포즈에서 약간 떨어진 중간 세이프티 자세로 이동
+        2) target_point 앞+살짝 옆 위치로 이동 + Gripper 직각 회전
+        3) target_point 살짝 옆 위치로 이동 + Gripper 직각 회전
+        4) 일정 거리 Sweep
+        5) (2) 위치로 복귀 (Sweep 전 자세로)
+        """
+
+        # ur_controller에 정의된 safety_pose 시작
+        safety_pose: Pose = self._ur_controller.safety_pose.pose
+
+        # target_point에서 떨어진 앞 + 살짝 옆 위치 (UR 정면의 역방향)
+        p1 = self._direction.move_point(
+            point=self._target_point, distance=0.1, reverse=True
+        )
+        p2 = self._sweep_direction.move_point(
+            point=p1,
+            distance=self._offset_distance,
+            reverse=True,
+        )
+        aim_pose = Pose(
+            position=p2,
+            orientation=self._ur_controller.sweep_orientation,
+        )
+
+        # target_point에서, 살짝 옆 위치 (UR 정면의 역방향)
+        target_pose = Pose(
+            position=self._sweep_direction.move_point(
+                point=self._target_point,
+                distance=self._offset_distance,
+                reverse=True,
+            ),
+            orientation=self._ur_controller.sweep_orientation,
+        )
+
+        self._ur_controller.plan_and_execute_kinematic_path(
+            waypoints=[safety_pose, aim_pose, target_pose],
+            max_retries=20,
+        )
 
     def _sweep(self):
+        target_pose = Pose(
+            position=self._sweep_direction.move_point(
+                point=self._target_point,
+                distance=self._sweep_distance,
+                reverse=False,
+            ),
+            orientation=self._ur_controller.sweep_orientation,
+        )
+
+        self._ur_controller.plan_and_execute_cartesian_path(
+            waypoints=[target_pose], max_retries=20
+        )
         pass
 
     def _return_home(self):
-        pass
+        # target_point에서 떨어진 앞 + 살짝 옆 위치 (UR 정면의 역방향)
+        p1 = self._direction.move_point(
+            point=self._target_point, distance=0.1, reverse=True
+        )
+        p2 = self._sweep_direction.move_point(
+            point=p1,
+            distance=self._sweep_distance,
+            reverse=False,
+        )
+        aim_pose = Pose(
+            position=p2,
+            orientation=self._ur_controller.sweep_orientation,
+        )
 
-    def step(self):
-        self._methods[self._state]()
+        safety_pose: Pose = self._ur_controller.safety_pose.pose
 
-        if self._state == self.State.RETURN_HOME:
-            self._state = (
-                self.State.HOME
-            )  # 다음 액션 시퀸스에서도 HOME부터 시작하도록 초기화
-            return True  # 액션 시퀸스 종료 신호
+        waiting_pose: Pose = self._ur_controller.waiting_pose.pose
 
-        else:
-            self._state = self.State(self._state.value + 1)
-            return False  # 액션 시퀸스 진행 중 신호
+        self._ur_controller.plan_and_execute_kinematic_path(
+            waypoints=[aim_pose, safety_pose, waiting_pose],
+            max_retries=20,
+        )

@@ -28,6 +28,20 @@ class FCNServiceNode(Node):
     def __init__(self):
         super().__init__("fcn_service_node")
 
+        self.declare_parameters(
+            namespace="",
+            parameters=[
+                ("fcn_gain", 2.0),
+                ("fcn_gamma", 0.7),
+                (
+                    "model_path",
+                    "/home/min/7cmdehdrb/project_sky/src/fcn_network/resource/best_model.pth",
+                ),
+                ("fcn_image_transform", True),
+                ("peak_boundaries", [0, 128, 256, 384, 512, 640]),
+            ],
+        )
+
         # 비동기 서비스 처리를 위한 콜백 그룹
         self.srv_cb_group = ReentrantCallbackGroup()
         self.timer_cb_group = MutuallyExclusiveCallbackGroup()
@@ -41,16 +55,29 @@ class FCNServiceNode(Node):
 
         # --- 1. FCN Manager 초기화 ---
         self.get_logger().info("FCN 모델을 로드합니다...")
+
+        fcn_gain = self.get_parameter("fcn_gain").get_parameter_value().double_value
+        fcn_gamma = self.get_parameter("fcn_gamma").get_parameter_value().double_value
+        model_path = self.get_parameter("model_path").get_parameter_value().string_value
+        fcn_image_transform = (
+            self.get_parameter("fcn_image_transform").get_parameter_value().bool_value
+        )
+        peak_boundaries = list(
+            self.get_parameter("peak_boundaries")
+            .get_parameter_value()
+            .integer_array_value
+        )
+
         self.fcn_manager = FCNManager(
             node=self,
-            fcn_gain=2.0,  # 임의 파라미터
-            fcn_gamma=0.7,  # 임의 파라미터
-            model_path="/home/min/7cmdehdrb/project_sky/src/fcn_network/resource/best_model.pth",  # 모델 경로
-            fcn_image_transform=True,
+            fcn_gain=fcn_gain,
+            fcn_gamma=fcn_gamma,
+            model_path=model_path,
+            fcn_image_transform=fcn_image_transform,
         )
+        self.fcn_manager.peak_boundaries = peak_boundaries
+
         # 구역 설정 (필요시 동적 변경 가능)
-        self.fcn_manager.peak_boundaries = [0, 185, 320, 455, 640]  # 4개의 구역 상태
-        # self.fcn_manager.peak_boundaries = [0, 170, 300, 460]
 
         # --- 2. Image Manager 초기화 및 상시 구독 ---
         self._image_manager = ImageManager(
@@ -85,6 +112,13 @@ class FCNServiceNode(Node):
         self.get_logger().info(
             "🟢 노드 B (FCN Service) 준비 완료. 이미지 수신 및 요청 대기 중..."
         )
+
+        self.get_logger().info("FCN Manager 초기화 완료.")
+        self.get_logger().info(f"모델 경로: {model_path}")
+        self.get_logger().info(
+            f"Gain: {fcn_gain}, Gamma: {fcn_gamma}, Image Transform: {fcn_image_transform}"
+        )
+        self.get_logger().info(f"Peak Boundaries: {peak_boundaries}")
 
     def image_callback(self, msg: Image):
         """카메라로부터 이미지를 상시 수신하여 최신 상태로 유지합니다."""

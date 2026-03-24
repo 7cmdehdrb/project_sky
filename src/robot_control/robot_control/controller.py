@@ -64,6 +64,63 @@ def retry_step(
     return False, None  # 최대 재시도 횟수 초과 시 False
 
 
+def merge_trajectories(trajectories: List[RobotTrajectory]) -> RobotTrajectory:
+    # (기존 작성하신 병합 로직과 동일하므로 내용은 그대로 유지합니다)
+    if not trajectories:
+        raise ValueError("병합할 궤적 리스트가 비어있습니다.")
+
+    def duration_to_nanosec(duration: BuiltinDuration) -> int:
+        return duration.sec * 1_000_000_000 + duration.nanosec
+
+    def nanosec_to_duration(total_nanosec: int, duration_type) -> Any:
+        sec = total_nanosec // 1_000_000_000
+        nanosec = total_nanosec % 1_000_000_000
+        return duration_type(sec=sec, nanosec=nanosec)
+
+    merged_points = []
+    accumulated_nanosec = 0
+
+    for idx, traj in enumerate(trajectories):
+        points: List[JointTrajectoryPoint] = traj.joint_trajectory.points
+        if not points:
+            continue
+
+        start_point_idx = 1 if idx > 0 else 0
+
+        for point in points[start_point_idx:]:
+            current_point_ns = duration_to_nanosec(point.time_from_start)
+            new_time_ns = accumulated_nanosec + current_point_ns
+
+            new_point = JointTrajectoryPoint(
+                positions=point.positions,
+                velocities=point.velocities,
+                accelerations=point.accelerations,
+                effort=point.effort,
+                time_from_start=nanosec_to_duration(
+                    new_time_ns, type(point.time_from_start)
+                ),
+            )
+            merged_points.append(new_point)
+
+        last_point_ns = duration_to_nanosec(points[-1].time_from_start)
+        accumulated_nanosec += last_point_ns
+
+    base_traj: RobotTrajectory = trajectories[0]
+
+    new_joint_trajectory = JointTrajectory(
+        header=base_traj.joint_trajectory.header,
+        joint_names=base_traj.joint_trajectory.joint_names,
+        points=merged_points,
+    )
+
+    merged_trajectory = RobotTrajectory(
+        joint_trajectory=new_joint_trajectory,
+        multi_dof_joint_trajectory=base_traj.multi_dof_joint_trajectory,
+    )
+
+    return merged_trajectory
+
+
 class UR5eController:
     def __init__(self, node: Node):
         self._node: Node = node
@@ -76,7 +133,7 @@ class UR5eController:
             0.01  # IK 솔버의 허용 오차 (예시값, 필요에 따라 조정)
         )
         self._fraction_threshold: float = (
-            0.1  # Cartesian Path 계획 시 허용할 최소 경로 완성도 (예시값, 필요에 따라 조정)
+            0.7  # Cartesian Path 계획 시 허용할 최소 경로 완성도 (예시값, 필요에 따라 조정)
         )
         self._default_frame_id: str = (
             "world"  # UR5e의 기본 프레임 ID (MoveIt2 설정에 따라 다를 수 있음)
@@ -148,8 +205,8 @@ class UR5eController:
                 -0.14543800000017093,
                 -0.5723896666667043,
                 -2.2659790000078974,
-                -1.7612139999999918,
-                3.1378459999999997,
+                -1.76121310109918,
+                3.1378451010107,
                 0.04616566666664836,
             ],
         )
@@ -276,6 +333,31 @@ class UR5eController:
         )
 
     @property
+    def sweep_orientation(self) -> Quaternion:
+        home_orientation = self.home_orientation
+
+        h_roll, h_pitch, h_yaw = euler_from_quaternion(
+            [
+                home_orientation.x,
+                home_orientation.y,
+                home_orientation.z,
+                home_orientation.w,
+            ]
+        )
+
+        # sweep_joints에서 pitch 방향으로 90도 회전한 orientation 계산
+        sx, sy, sz, sw = quaternion_from_euler(
+            [h_roll, h_pitch + +np.deg2rad(90.0), h_yaw]
+        )
+
+        return Quaternion(
+            x=sx,
+            y=sy,
+            z=sz,
+            w=sw,
+        )
+
+    @property
     def tcp_pose(self) -> PoseStamped | None:
         if self._joint_states is None:
             self._node.get_logger().warn(
@@ -295,6 +377,33 @@ class UR5eController:
         기본: Node
         """
         self._joint_states = msg
+
+    def _create_default_collision_object(self) -> List[CollisionObject]:
+
+        collision_object = CollisionObject(
+            id=f"10001",
+            header=Header(
+                stamp=self._node.get_clock().now().to_msg(),
+                frame_id="base_link",
+            ),
+            operation=CollisionObject.ADD,
+            primitives=[
+                SolidPrimitive(
+                    type=SolidPrimitive.BOX,
+                    dimensions=[0.7, 0.7, 0.4],
+                ),
+            ],
+            primitive_poses=[
+                Pose(
+                    position=Point(x=0.0, y=0.0, z=-0.2),
+                    orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0),
+                )
+            ],
+        )
+
+        collision_objects = [collision_object]
+
+        return collision_objects
 
     def _collision_objects_callback(self, msg: MarkerArray):
         """
@@ -346,6 +455,18 @@ class UR5eController:
             frame_id=self._default_frame_id,
         )
 
+    def get_trajectory_duration(self, traj: RobotTrajectory) -> float:
+        """
+        RobotTrajectory의 총 실행 시간을 초 단위(float)로 반환한다.
+        """
+        if not traj.joint_trajectory.points:
+            raise ValueError("Trajectory에 point가 없습니다.")
+
+        last_point = traj.joint_trajectory.points[-1]
+        duration = last_point.time_from_start
+
+        return duration.sec + duration.nanosec * 1e-9
+
     def _get_and_apply_planning_scene(self) -> bool:
         """
         현재 로봇의 Planning Scene을 가져와서, 수신된 Collision Objects를 추가한 후 다시 적용하는 메서드.
@@ -379,183 +500,326 @@ class UR5eController:
             B 단계: 수신된 Collision Objects를 추가한 씬 생성 및 적용
             """
             current_scene: PlanningScene = self._get_planning_scene_manager.run()
+
+            new_collision_objects = (
+                self._collision_objects + self._create_default_collision_object()
+            )
+
             return self._apply_planning_scene_manager.run(
-                collision_objects=self._collision_objects,
+                collision_objects=new_collision_objects,
                 scene=current_scene,
             )
 
-        _, _ = retry_step(step_a_clear_scene, max_retries=999)
+        _, _ = retry_step(step_a_clear_scene, max_retries=10)
 
-        _, _ = retry_step(step_b_apply_new_objects, max_retries=999)
+        _, _ = retry_step(step_b_apply_new_objects, max_retries=10)
 
-    def plan_and_execute_cartesian_path(self, waypoints: List[Pose]):
+    def plan_and_execute_cartesian_path(
+        self, waypoints: List[Pose], max_retries: int = 3
+    ) -> bool:
         """
         주어진 waypoints 리스트를 따라 Cartesian Path를 계획하고 실행하는 메서드.
-        1) Planning Scene 업데이트 (_get_and_apply_planning_scene)
-        2) waypoints[0]에 대하여 Planning
-            - Conttraint
-            - TrajectoryMessage 획득
-        3) waypoints[1] ~ waypoints[-1]에 대하여 Planning
-            - TrajectoryMessage 획득
-        4) TrajectoryMessage 병합
-        5) Trajectory 실행
+        실행 중 예기치 않게 일찍 종료된 경우, 이미 지나온 궤적은 무시하고
+        현재 멈춘 위치에서 남은 Waypoint들에 대해서만 재플래닝하여 실행합니다.
         """
 
-        def merge_trajectories(trajectories: List[RobotTrajectory]) -> RobotTrajectory:
-            """
-            여러 개의 RobotTrajectory를 시간순으로 병합하여 하나의 궤적으로 반환합니다.
-            """
-            if not trajectories:
-                raise ValueError("병합할 궤적 리스트가 비어있습니다.")
+        attempt = 0
+        current_waypoints = waypoints.copy()  # 원본 보존 및 남은 목표지점 관리용
 
-            # 시간 계산을 위한 내부 헬퍼 함수
-            def duration_to_nanosec(duration: BuiltinDuration) -> int:
-                return duration.sec * 1_000_000_000 + duration.nanosec
+        while attempt < max_retries:
+            if not current_waypoints:
+                self._node.get_logger().info(
+                    "방문할 남은 Waypoint가 없습니다. 이동을 완료합니다."
+                )
+                return True
 
-            def nanosec_to_duration(total_nanosec: int, duration_type) -> Any:
-                sec = total_nanosec // 1_000_000_000
-                nanosec = total_nanosec % 1_000_000_000
-                return duration_type(sec=sec, nanosec=nanosec)
-
-            merged_points = []
-            accumulated_nanosec = 0
-
-            for idx, traj in enumerate(trajectories):
-                points: List[JointTrajectoryPoint] = traj.joint_trajectory.points
-                if not points:
-                    continue
-
-                # 💡 핵심: 두 번째 궤적(idx > 0)부터는 첫 번째 포인트(t=0)가
-                # 이전 궤적의 마지막 포인트와 중복되므로 제외(Skip)합니다.
-                start_point_idx = 1 if idx > 0 else 0
-
-                for point in points[start_point_idx:]:
-                    point: JointTrajectoryPoint
-
-                    # 현재 포인트의 원래 시간 + 이전 궤적들까지의 누적 시간
-                    current_point_ns = duration_to_nanosec(point.time_from_start)
-                    new_time_ns = accumulated_nanosec + current_point_ns
-
-                    new_point = JointTrajectoryPoint(
-                        positions=point.positions,
-                        velocities=point.velocities,
-                        accelerations=point.accelerations,
-                        effort=point.effort,  # effort 필드도 안전하게 넘겨줍니다.
-                        # type(point.time_from_start)를 사용하여 원본과 동일한 Duration 타입 보장
-                        time_from_start=nanosec_to_duration(
-                            new_time_ns, type(point.time_from_start)
-                        ),
-                    )
-                    merged_points.append(new_point)
-
-                # 다음 궤적 병합을 위해 누적 시간 업데이트 (현재 궤적의 전체 길이 더하기)
-                # 주의: 잘라내기 전 원본 points의 마지막 포인트 시간을 더해야 함
-                last_point_ns = duration_to_nanosec(points[-1].time_from_start)
-                accumulated_nanosec += last_point_ns
-
-            # 첫 번째 궤적의 메타데이터(header, joint_names 등)를 기준으로 새로운 궤적 조립
-            base_traj: RobotTrajectory = trajectories[0]
-
-            new_joint_trajectory = JointTrajectory(
-                header=base_traj.joint_trajectory.header,
-                joint_names=base_traj.joint_trajectory.joint_names,
-                points=merged_points,
-            )
-
-            merged_trajectory = RobotTrajectory(
-                joint_trajectory=new_joint_trajectory,
-                multi_dof_joint_trajectory=base_traj.multi_dof_joint_trajectory,
-            )
-
-            return merged_trajectory
-
-        # 1. Planning Scene 업데이트
-        self._node.get_logger().info("Planning Scene 업데이트 중...")
-        _ = self._get_and_apply_planning_scene()
-
-        trajs: List[RobotTrajectory] = []
-
-        # 1. 첫 번째 시작 상태는 현재 로봇의 관절 상태로 초기화
-        current_start_state = self._joint_states
-
-        # 2. waypoints에 대하여 Planning (LOOP)
-        for i, waypoint in enumerate(waypoints):
-
+            # 1. Planning Scene 업데이트 (재시도 시 멈춘 위치 반영)
             self._node.get_logger().info(
-                f"Waypoint {i + 1}/{len(waypoints)}에 대한 경로 계획 중..."
+                f"[{attempt + 1}/{max_retries}] Planning Scene 업데이트 중..."
             )
+            _ = self._get_and_apply_planning_scene()
 
-            # 경로 계획 (현재 설정된 current_start_state를 기반으로 시작)
-            _, traj = retry_step(
-                step_func=self._cartesian_path_manager.run,
-                max_retries=999,
-                delay=0.5,
-                header=self._get_header(),
-                waypoints=[waypoint],
-                joint_states=current_start_state,  # 여기서 current만 사용하게 됨
-                end_effector=self._end_effector_link,
+            trajs: List[RobotTrajectory] = []
+
+            # 첫 번째 시작 상태는 현재 로봇의 관절 상태로 초기화
+            current_start_state = self._joint_states
+
+            # 2. 남은 current_waypoints에 대하여 Planning (LOOP)
+            for i, waypoint in enumerate(current_waypoints):
+                self._node.get_logger().info(
+                    f"Waypoint {i + 1}/{len(current_waypoints)}에 대한 경로 계획 중..."
+                )
+
+                _, traj = retry_step(
+                    step_func=self._cartesian_path_manager.run,
+                    max_retries=10,
+                    delay=0.5,
+                    header=self._get_header(),
+                    waypoints=[waypoint],
+                    joint_states=current_start_state,
+                    end_effector=self._end_effector_link,
+                )
+
+                # 예외 처리: 만약 특정 구간 플래닝 실패 시 로직 종료
+                if not traj:
+                    self._node.get_logger().error(
+                        f"Waypoint {i + 1}에 대한 Planning에 실패했습니다."
+                    )
+                    return False
+
+                trajs.append(traj)
+
+                # 다음 루프를 위해 current_start_state를 방금 계산한 traj의 마지막 상태로 갱신
+                last_point: JointTrajectoryPoint = traj.joint_trajectory.points[-1]
+                current_start_state = JointState(
+                    header=self._joint_states.header,
+                    name=traj.joint_trajectory.joint_names,
+                    position=last_point.positions,
+                    velocity=last_point.velocities,
+                    effort=last_point.effort,
+                )
+
+            # 4. Trajectory 병합
+            merged_traj = merge_trajectories(trajs)
+            total_duration = self.get_trajectory_duration(merged_traj)
+
+            # 5. Trajectory 실행
+            t1 = time.time()
+            self._node.get_logger().info("병합된 궤적 실행 중...")
+            self._execute_trajectory_manager.run(
+                trajectory=merged_traj,
             )
-            # traj = self._execute_trajectory_manager.scale_trajectory(
-            #     trajectory=traj, scale_factor=0.5
-            # )
+            t2 = time.time()
 
-            trajs.append(traj)
-            traj: RobotTrajectory
+            elapsed_time = t2 - t1
+            wait_time = total_duration - elapsed_time
 
-            # 3. 다음 루프를 위해 current_start_state를 방금 계산한 traj의 마지막 상태로 갱신
-            last_point: JointTrajectoryPoint = traj.joint_trajectory.points[-1]
+            if wait_time > 0.1:  # 통신 딜레이 고려 마진
+                self._node.get_logger().warn(
+                    f"Cartesian 이동이 예상보다 일찍 종료되었습니다. "
+                    f"(예상: {total_duration:.2f}초, 실제: {elapsed_time:.2f}초)"
+                )
 
-            current_start_state = JointState(
-                header=self._joint_states.header,
-                name=traj.joint_trajectory.joint_names,  # 💡 중요: JointState는 어떤 관절인지 나타내는 name 매핑이 꼭 필요합니다!
-                position=last_point.positions,
-                velocity=last_point.velocities,
-                effort=last_point.effort,
-            )
+                # 💡 핵심 로직: 실행된 시간을 추적하여 로봇이 몇 번째 Waypoint를 향하던 중이었는지 파악
+                accumulated_time = 0.0
+                resume_idx = 0
+                for idx, t in enumerate(trajs):
+                    dur = self.get_trajectory_duration(t)
+                    accumulated_time += dur
+                    if accumulated_time > elapsed_time:
+                        resume_idx = idx
+                        break
 
-        # 4. Trajectory 병합
-        merged_traj = merge_trajectories(trajs)
+                # 이미 통과했거나 도달한 Waypoint는 리스트에서 슬라이싱하여 잘라냄
+                current_waypoints = current_waypoints[resume_idx:]
 
-        # 5. Trajectory 실행
-        self._node.get_logger().info("병합된 궤적 실행 중...")
-        self._execute_trajectory_manager.run(
-            trajectory=merged_traj,
+                self._node.get_logger().info(
+                    f"지나온 궤적을 무시하고, 현재 위치에서 남은 {len(current_waypoints)}개의 Waypoint로 재플래닝을 시도합니다."
+                )
+                attempt += 1
+                continue
+            else:
+                self._node.get_logger().info(
+                    "Cartesian Path 궤적 실행이 성공적으로 완료되었습니다."
+                )
+                return True
+
+        self._node.get_logger().error(
+            f"Cartesian Path 재시도 횟수({max_retries}회)를 초과하여 실패했습니다."
         )
+        return False
 
-        return True
+    def plan_and_execute_kinematic_path(
+        self, waypoints: List[Pose], max_retries: int = 3
+    ) -> bool:
 
-    def moveJ(self, joint_states: JointState):
+        attempt = 0
+        current_waypoints = waypoints.copy()  # 원본 보존 및 남은 목표지점 관리용
+
+        while attempt < max_retries:
+            if not current_waypoints:
+                self._node.get_logger().info(
+                    "방문할 남은 Waypoint가 없습니다. 이동을 완료합니다."
+                )
+                return True
+
+            # 1. Planning Scene 업데이트 (재시도 시 멈춘 위치 반영)
+            self._node.get_logger().info(
+                f"[{attempt + 1}/{max_retries}] Planning Scene 업데이트 중..."
+            )
+            _ = self._get_and_apply_planning_scene()
+
+            trajs: List[RobotTrajectory] = []
+
+            # 첫 번째 시작 상태는 현재 로봇의 관절 상태로 초기화
+            current_start_state = self._joint_states
+
+            # 2. 남은 current_waypoints에 대하여 Planning (LOOP)
+            for i, waypoint in enumerate(current_waypoints):
+                self._node.get_logger().info(
+                    f"Waypoint {i + 1}/{len(current_waypoints)}에 대한 경로 계획 중..."
+                )
+
+                goal_robot_states: RobotState = self._ik_manager.run(
+                    pose_stamped=PoseStamped(
+                        header=self._get_header(),
+                        pose=waypoint,
+                    ),
+                    joint_states=current_start_state,
+                    end_effector=self._end_effector_link,
+                )
+
+                constraint = self._kinematic_path_manager.get_goal_constraint(
+                    goal_joint_states=goal_robot_states.joint_state,
+                    tolerance=self._kinematic_tolerance,
+                )
+
+                _, traj = retry_step(
+                    step_func=self._kinematic_path_manager.run,
+                    max_retries=10,
+                    delay=0.5,
+                    goal_constraints=[constraint],
+                    path_constraints=None,
+                    joint_states=current_start_state,
+                    num_planning_attempts=100,
+                    allowed_planning_time=1.0,
+                    max_velocity_scaling_factor=1.0,
+                    max_acceleration_scaling_factor=1.0,
+                )
+
+                # 예외 처리: 만약 특정 구간 플래닝 실패 시 로직 종료
+                if not traj:
+                    self._node.get_logger().error(
+                        f"Waypoint {i + 1}에 대한 Planning에 실패했습니다."
+                    )
+                    return False
+
+                trajs.append(traj)
+
+                # 다음 루프를 위해 current_start_state를 방금 계산한 traj의 마지막 상태로 갱신
+                last_point: JointTrajectoryPoint = traj.joint_trajectory.points[-1]
+                current_start_state = JointState(
+                    header=self._joint_states.header,
+                    name=traj.joint_trajectory.joint_names,
+                    position=last_point.positions,
+                    velocity=last_point.velocities,
+                    effort=last_point.effort,
+                )
+
+            # 4. Trajectory 병합
+            merged_traj = merge_trajectories(trajs)
+            total_duration = self.get_trajectory_duration(merged_traj)
+
+            # 5. Trajectory 실행
+            t1 = time.time()
+            self._node.get_logger().info("병합된 궤적 실행 중...")
+            self._execute_trajectory_manager.run(
+                trajectory=merged_traj,
+            )
+            t2 = time.time()
+
+            elapsed_time = t2 - t1
+            wait_time = total_duration - elapsed_time
+
+            if wait_time > 0.1:  # 통신 딜레이 고려 마진
+                self._node.get_logger().warn(
+                    f"Kinematic 이동이 예상보다 일찍 종료되었습니다. "
+                    f"(예상: {total_duration:.2f}초, 실제: {elapsed_time:.2f}초)"
+                )
+
+                # 💡 핵심 로직: 실행된 시간을 추적하여 로봇이 몇 번째 Waypoint를 향하던 중이었는지 파악
+                accumulated_time = 0.0
+                resume_idx = 0
+                for idx, t in enumerate(trajs):
+                    dur = self.get_trajectory_duration(t)
+                    accumulated_time += dur
+                    if accumulated_time > elapsed_time:
+                        resume_idx = idx
+                        break
+
+                # 이미 통과했거나 도달한 Waypoint는 리스트에서 슬라이싱하여 잘라냄
+                current_waypoints = current_waypoints[resume_idx:]
+
+                self._node.get_logger().info(
+                    f"지나온 궤적을 무시하고, 현재 위치에서 남은 {len(current_waypoints)}개의 Waypoint로 재플래닝을 시도합니다."
+                )
+                attempt += 1
+                continue
+            else:
+                self._node.get_logger().info(
+                    "Kinematic Path 궤적 실행이 성공적으로 완료되었습니다."
+                )
+                return True
+
+        self._node.get_logger().error(
+            f"Kinematic Path 재시도 횟수({max_retries}회)를 초과하여 실패했습니다."
+        )
+        return False
+
+    def moveJ(self, joint_states: JointState, max_retries: int = 3) -> bool:
         """
         주어진 JointState로 관절 이동하는 메서드.
-        1) Planning Scene 업데이트 (_get_and_apply_planning_scene)
-        2) Joint State에 대하여 Planning
-            - TrajectoryMessage 획득
-        3) Trajectory 실행
+        실행 중 예기치 않게 일찍 종료된 경우(wait_time > 0),
+        현재 위치에서 남은 거리에 대해 재플래닝하여 이동을 재시도합니다.
         """
 
-        # 1. Planning Scene 업데이트
-        _ = self._get_and_apply_planning_scene()
-
-        # 2. Joint State에 대하여 Planning
-
-        goal_constraint: Constraints = self._kinematic_path_manager.get_goal_constraint(
+        goal_constraint = self._kinematic_path_manager.get_goal_constraint(
             goal_joint_states=joint_states, tolerance=self._kinematic_tolerance
         )
 
-        _, traj = retry_step(
-            step_func=self._kinematic_path_manager.run,
-            max_retries=999,
-            delay=0.5,
-            goal_constraints=[goal_constraint],
-            path_constraints=None,
-            joint_states=self._joint_states,
-        )
+        attempt = 0
+        while attempt < max_retries:
+            # 1. Planning Scene 업데이트
+            # (재시도 시, 방금 전까지 이동하다 멈춘 로봇의 최신 상태가 반영됨)
+            _ = self._get_and_apply_planning_scene()
 
-        self._execute_trajectory_manager.run(
-            trajectory=traj,
-        )
+            # 2. Joint State에 대하여 Planning
+            # 최신 self._joint_states를 시작점으로 사용하므로,
+            # 이전에 이동했던 궤적은 자연스럽게 무시되고 "현재 위치 -> 목표 위치"의 새 궤적이 생성됨
+            success, traj = retry_step(
+                step_func=self._kinematic_path_manager.run,
+                max_retries=10,
+                delay=0.5,
+                goal_constraints=[goal_constraint],
+                path_constraints=None,
+                joint_states=self._joint_states,
+            )
 
-        return True
+            if not traj:
+                self._node.get_logger().error("Trajectory 플래닝에 실패했습니다.")
+                return False
+
+            duration = self.get_trajectory_duration(traj)
+            t1 = time.time()
+
+            # 3. Trajectory 실행
+            self._execute_trajectory_manager.run(
+                trajectory=traj,
+            )
+
+            t2 = time.time()
+            elapsed_time = t2 - t1
+            wait_time = duration - elapsed_time
+
+            # 통신 지연 등 미세한 오차를 고려해 0.1초 정도의 마진을 둡니다.
+            if wait_time > 0.1:
+                self._node.get_logger().warn(
+                    f"[{attempt + 1}/{max_retries}] 관절 이동이 예상보다 일찍 종료되었습니다. "
+                    f"(예상: {duration:.2f}초, 실제: {elapsed_time:.2f}초)\n"
+                    "남은 구간 이동을 위해 현재 위치에서 재플래닝 및 실행을 시도합니다."
+                )
+                attempt += 1
+                continue  # 루프의 처음으로 돌아가 Planning Scene 업데이트부터 다시 시작
+            else:
+                self._node.get_logger().info(
+                    "관절 이동 명령이 예상 시간만큼 충분히 실행되었습니다."
+                )
+                return True
+
+        self._node.get_logger().error(
+            f"관절 이동 재시도 횟수({max_retries}회)를 초과하여 실패했습니다."
+        )
+        return False
 
 
 class RobotiqController:

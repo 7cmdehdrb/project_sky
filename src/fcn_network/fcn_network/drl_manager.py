@@ -32,13 +32,9 @@ class RLPolicyManager:
             )
 
         # --- 관측(Observation) 상태 버퍼 초기화 ---
-        self._column_distribution = np.zeros(4, dtype=np.float32)  # FCN -> float 배열
-        self._front_object_distance = np.zeros(
-            4, dtype=np.float32
-        )  # 각 ROW 거리 (이산적)
-        self._front_object = np.zeros(
-            4, dtype=np.float32
-        )  # 각 ROW 맨 앞에 있는 물체 클래스
+        self._column_distribution = None  # FCN -> float 배열
+        self._front_object_distance = None  # 각 ROW 거리 (이산적)
+        self._front_object = None  # 각 ROW 맨 앞에 있는 물체 클래스
 
         self._target_id = 0.0
 

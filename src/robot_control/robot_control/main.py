@@ -33,8 +33,7 @@ from base_package.transform_manager import TransformManager
 from robot_control.action_sequence import (
     ActionSequence,
     GraspActionSequence,
-    SweepLeftActionSequence,
-    SweepRightActionSequence,
+    SweepActionSequence,
     AxisDirection,
 )
 from robot_control.controller import UR5eController, RobotiqController
@@ -233,20 +232,34 @@ class MainControlNode(Node):
             ur_controller=self._ur5e_controller,
             gripper_controller=self._robotiq_controller,
             target_point=None,  # 실제 타겟 포인트는 DRL 모듈에서 받아와야 하므로 초기값은 None
-            direction=AxisDirection.POS_Y,  # 예시로 POS_X 방향으로 설정 (실제 방향은 DRL 모듈에서 받아와야 함)
+            direction=AxisDirection.POS_Y,
         )
-        self._sweep_left_action_sequence = SweepLeftActionSequence(
+        self._sweep_right_action_sequence = SweepActionSequence(
             node=self,
             ur_controller=self._ur5e_controller,
             gripper_controller=self._robotiq_controller,
             target_point=None,  # 실제 타겟 포인트는 DRL 모듈에서 받아와야 하므로 초기값은 None
+            direction=AxisDirection.POS_Y,
+            sweep_direction=AxisDirection.POS_X,  # 오른쪽으로 스윕
+            sweep_distance=0.1,  # 스윕 거리 (예시값, 실제로는 DRL 모듈에서 받아와야 할 수도 있음)
+            offset_distance=0.05,  # 타겟 포인트에서 스윕 시작 지점까지의 오프셋 거리 (예시값, 실제로는 DRL 모듈에서 받아와야 할 수도 있음)
         )
-        self._sweep_right_action_sequence = SweepRightActionSequence(
+        self._sweep_left_action_sequence = SweepActionSequence(
             node=self,
             ur_controller=self._ur5e_controller,
             gripper_controller=self._robotiq_controller,
             target_point=None,  # 실제 타겟 포인트는 DRL 모듈에서 받아와야 하므로 초기값은 None
+            direction=AxisDirection.POS_Y,
+            sweep_direction=AxisDirection.NEG_X,  # 왼쪽으로 스윕
+            sweep_distance=0.1,  # 스윕 거리 (예시값, 실제로는 DRL 모듈에서 받아와야 할 수도 있음)
+            offset_distance=0.05,  # 타겟 포인트에서 스윕 시작 지점까지의 오프셋 거리 (예시값, 실제로는 DRL 모듈에서 받아와야 할 수도 있음)
         )
+
+        self._sequences: dict[int, ActionSequence] = {
+            0: self._grasp_action_sequence,
+            1: self._sweep_right_action_sequence,
+            2: self._sweep_left_action_sequence,
+        }
 
         self._transform_manager = TransformManager(node=self)
 
@@ -267,10 +280,16 @@ class MainControlNode(Node):
         self._action_type: int = None
         self._target_column: int = None
         self._drop_cell: Point = None
-        self._temp_target_obejct: Marker = None
         # <<< System Variables <<<
 
     def _drl_search(self):
+        """
+        0: Grasp
+        1: Sweep Right
+        2: Sweep Left
+        """
+        import random
+
         # 1. DRL 모듈에 동기식 요청 보내기
         # int32 action_type / int32 target_column 응답
         res: GetPolicyAction.Response = self._drl_client.send_request_sync()
@@ -278,33 +297,19 @@ class MainControlNode(Node):
         self._action_type: int = res.action_type
         self._target_column: int = res.target_column
 
-        self._action_type = (
-            0  # TODO: 테스트 용도, 실제로는 DRL 모듈에서 받아온 action_type 사용
-        )
-
-        import random
-
-        self._target_column: int = random.randint(
-            0, 3
-        )  # TODO: 테스트 용도, 실제로는 DRL 모듈에서 받아온 target_column 사용
+        # FOR TEST
+        self._action_type = random.randint(1, 2)
+        self._target_column = random.randint(1, 3)
 
         if self._action_type == 0:
-            # Drop 해야 하기에, 다음 드롭 셀 정보 요청 -> ActionSequence에 타겟 포인트로 전달
-            """
-            bool success
-            string row_id
-            int32 col_id
-            string frame_id
-            geometry_msgs/Point center_coord
-            geometry_msgs/Vector3 size
-            """
+            # Grasp의 경우에만, Drop 좌표를 계산함
+
             res: GetNextDropCell.Response = (
                 self._drop_client.request_next_drop_cell_sync()
             )
 
-            pose = res.center_coord.pose
             transformed_pose = self._transform_manager.transform_pose(
-                pose=pose,
+                pose=res.center_coord.pose,
                 target_frame="world",
                 source_frame=res.center_coord.header.frame_id,
             )
@@ -316,13 +321,13 @@ class MainControlNode(Node):
         target_object_marker: Marker = self._target_picker.get_target_object_by_column(
             self._target_column
         )
-        self._temp_target_obejct = self._target_picker.post_process_target_object(
+        processed_target_object_marker = self._target_picker.post_process_target_object(
             target_object_marker
         )
 
         # Update
-        self._grasp_action_sequence.target_point = (
-            self._temp_target_obejct.pose.position
+        self._sequences[self._action_type].target_point = (
+            processed_target_object_marker.pose.position
         )
 
         return True
@@ -332,13 +337,10 @@ class MainControlNode(Node):
         self._action_type에 해당하는 액션 시퀀스 실행
         res가 True가 될 때까지 반복
         """
-        methods = {
-            0: self._grasp_action_sequence.step,
-            1: self._sweep_left_action_sequence.step,
-            2: self._sweep_right_action_sequence.step,
-        }
 
-        res: bool = methods[self._action_type]()
+        res: bool = self._sequences[
+            self._action_type
+        ].step()  # 액션 시퀀스의 step() 메서드 호출
         return res
 
     def _end(self):

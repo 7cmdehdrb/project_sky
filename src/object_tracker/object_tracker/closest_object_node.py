@@ -29,17 +29,19 @@ class ClosestObjectClassifierNode(Node):
     def __init__(self, *args, **kwargs):
         super().__init__("closest_object_classifier")
 
-        self._node = self
-
         self._detected_objects = []
 
-        # 4개의 구역을 나누는 X축 픽셀 경계값
-        self._boundary = [170, 300, 460]
+        self.declare_parameter("boundary", [128, 256, 384, 512])
+        self._boundary = (
+            self.get_parameter("boundary").get_parameter_value().integer_array_value
+        )
+
+        self.get_logger().info(f"Boundary parameters: {self._boundary}")
 
         self._depth_raw = None
 
         self._image_manager = ImageManager(
-            self._node,
+            self,
             subscribed_topics=[
                 {
                     "topic_name": "/camera/camera1/depth/image_rect_raw",
@@ -51,9 +53,9 @@ class ClosestObjectClassifierNode(Node):
             **kwargs,
         )
 
-        self._object_manager = ObjectManager(self._node, *args, **kwargs)
+        self._object_manager = ObjectManager(self, *args, **kwargs)
 
-        self._node.create_subscription(
+        self.create_subscription(
             BoundingBoxMultiArray,
             "/real_time_segmentation_node/segmented_bbox",
             self.bbox_callback,
@@ -61,14 +63,14 @@ class ClosestObjectClassifierNode(Node):
         )
 
         # 가장 가까운 객체 ID 배열 발행 (기존)
-        self._result_publisher = self._node.create_publisher(
+        self._result_publisher = self.create_publisher(
             Int32MultiArray,
             self.get_name() + "/closest_object_ids",
             qos_profile_system_default,
         )
 
         # 시각화된 오버레이 이미지 발행 (신규)
-        self._overlay_publisher = self._node.create_publisher(
+        self._overlay_publisher = self.create_publisher(
             Image,
             self.get_name() + "/closest_object_overlay",
             qos_profile_system_default,
@@ -104,7 +106,7 @@ class ClosestObjectClassifierNode(Node):
             result = depth_image[depth_image < 1240]
             return result
         except Exception as e:
-            self._node.get_logger().error(f"Error removing outliers: {e}")
+            self.get_logger().error(f"Error removing outliers: {e}")
             return depth_image
 
     def publish_overlay_image(
@@ -182,7 +184,7 @@ class ClosestObjectClassifierNode(Node):
         default_ids = [-1] * num_cols
 
         if self._depth_raw is None:
-            self._node.get_logger().warn(
+            self.get_logger().warn(
                 "Depth image not available yet. Publishing default closest IDs."
             )
             result_msg = Int32MultiArray()
@@ -245,7 +247,7 @@ class ClosestObjectClassifierNode(Node):
         # 연산이 모두 끝난 후 시각화 이미지 오버레이 및 발행 함수 호출
         self.publish_overlay_image(depth_image, columns, num_cols)
 
-        self.get_logger().info(f"Published closest object IDs: {closest_ids}")
+        # self.get_logger().info(f"Published closest object IDs: {closest_ids}")
 
 
 def main(args=None):

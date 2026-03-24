@@ -89,13 +89,37 @@ class YoloManager:
 class RealTimeSegmentationNode(Node):
     def __init__(
         self,
-        model_file: str,
-        obj_bounds_file: str,
-        conf_threshold: float = 0.7,
         *arg,
         **kwargs,
     ):
         super().__init__("real_time_segmentation_node")
+
+        self.declare_parameters(
+            namespace="",
+            parameters=[
+                (
+                    "model_file",
+                    "/home/min/7cmdehdrb/project_sky/src/object_tracker/resource/best_hg.pt",
+                ),
+                (
+                    "obj_bounds_file",
+                    "/home/min/7cmdehdrb/project_sky/src/object_tracker/resource/obj_bounds.json",
+                ),
+                ("conf_threshold", 0.7),
+            ],
+        )
+
+        model_file = self.get_parameter("model_file").get_parameter_value().string_value
+        obj_bounds_file = (
+            self.get_parameter("obj_bounds_file").get_parameter_value().string_value
+        )
+        conf_threshold = (
+            self.get_parameter("conf_threshold").get_parameter_value().double_value
+        )
+
+        self.get_logger().info(f"Model file: {model_file}")
+        self.get_logger().info(f"Object bounds file: {obj_bounds_file}")
+        self.get_logger().info(f"Confidence threshold: {conf_threshold}")
 
         # >>> Managers >>>
         self._yolo_manager = YoloManager(self, model_path=model_file, *arg, **kwargs)
@@ -139,10 +163,6 @@ class RealTimeSegmentationNode(Node):
             topic_name=self.get_name() + "/segmented_image", msg=img_msg
         )
         self.segmented_bbox_publisher.publish(bbox_msg)
-
-        self.get_logger().info(
-            f"Published segmented image and {len(bbox_msg.data)} bounding boxes."
-        )
 
     def do_segmentation(self, msg: Image):
         # 1. YoloManager를 통한 통합 추론 (전처리 자동 수행)
@@ -282,11 +302,7 @@ def main(args=None):
     별도의 run() 함수 없이, 모든 로직이 Node 클래스 내부에 깔끔하게 캡슐화되어 있습니다.
     """
 
-    node = RealTimeSegmentationNode(
-        model_file="/home/min/7cmdehdrb/project_sky/src/object_tracker/resource/best_hg.pt",
-        obj_bounds_file="/home/min/7cmdehdrb/project_sky/src/object_tracker/resource/obj_bounds.json",
-        conf_threshold=0.7,
-    )
+    node = RealTimeSegmentationNode()
 
     rclpy.spin(node=node)
     node.destroy_node()

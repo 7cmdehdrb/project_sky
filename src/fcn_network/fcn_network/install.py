@@ -4,49 +4,73 @@ import tqdm
 
 install_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resource")
 
-# 설정값
-server_url = "http://7cmdehdrb.iptime.org/api/public/dl/vo0W2ESb"
-filename = "best_model.pth"
 
-# 파일 다운로드
-local_filepath = os.path.join(install_path, filename)
+def download_file(
+    server_url: str,
+    filename: str,
+    install_path: str,
+    extract_subdir: str = None,
+) -> None:
+    local_filepath = os.path.join(install_path, filename)
 
-# 파일이 이미 존재하는지 확인
-print(os.path.join(install_path, filename))
-if os.path.exists(os.path.join(install_path, filename)):
-    print(f"{filename} already exists in {install_path}. Stop downloading.")
+    print(local_filepath)
+    if os.path.exists(local_filepath):
+        print(f"{filename} already exists in {install_path}. Stop downloading.")
+        return
 
-else:
     print(f"Downloading {filename} from {server_url} ...")
     response: requests.models.Response = requests.get(server_url, stream=True)
 
-    if response.status_code == 200:
-        with open(local_filepath, "wb") as f:
-            total_size = int(response.headers.get("content-length", 0))
-            with tqdm.tqdm(
-                total=total_size, unit="B", unit_scale=True, desc=filename
-            ) as pbar:
-                for chunk in response.iter_content(chunk_size=1024):
-                    if chunk:
-                        f.write(chunk)
-                        pbar.update(len(chunk))
-        print(f"Downloaded {filename} to {local_filepath}")
-
-        # 압축 파일이면 풀기 (옵션)
-        if filename.endswith(".zip"):
-            import zipfile
-
-            with zipfile.ZipFile(local_filepath, "r") as zip_ref:
-                zip_ref.extractall(install_path)
-            print(f"Extracted {filename} to {install_path}")
-
-        # 실행 가능한 파일이면 권한 부여
-        if filename.endswith((".sh", ".bin")):
-            os.chmod(local_filepath, 0o755)
-            print(f"Set executable permissions for {local_filepath}")
-
-    else:
+    if response.status_code != 200:
         print(f"Failed to download {filename}, Status Code: {response.status_code}")
+        return
 
+    with open(local_filepath, "wb") as f:
+        total_size = int(response.headers.get("content-length", 0))
+        with tqdm.tqdm(
+            total=total_size, unit="B", unit_scale=True, desc=filename
+        ) as pbar:
+            for chunk in response.iter_content(chunk_size=1024):
+                if chunk:
+                    f.write(chunk)
+                    pbar.update(len(chunk))
+
+    print(f"Downloaded {filename} to {local_filepath}")
+
+    if filename.endswith(".zip"):
+        import zipfile
+
+        extract_path = install_path
+        if extract_subdir:
+            extract_path = os.path.join(install_path, extract_subdir)
+            os.makedirs(extract_path, exist_ok=True)
+
+        with zipfile.ZipFile(local_filepath, "r") as zip_ref:
+            zip_ref.extractall(extract_path)
+        print(f"Extracted {filename} to {extract_path}")
+
+    if filename.endswith((".sh", ".bin")):
+        os.chmod(local_filepath, 0o755)
+        print(f"Set executable permissions for {local_filepath}")
+
+
+download_targets = [
+    ("http://7cmdehdrb.iptime.org/api/public/dl/vo0W2ESb", "best_model.pth", None),
+    ("http://7cmdehdrb.iptime.org/api/public/dl/W8AY4jlg", "best_model_45.pth", None),
+    (
+        "http://7cmdehdrb.iptime.org/api/public/dl/3j_RIFjA/",
+        "exported_45.zip",
+        "exported_45",
+    ),
+    (
+        "http://7cmdehdrb.iptime.org/api/public/dl/_MUI8oCt/",
+        "exported.zip",
+        "exported",
+    ),
+]
+
+
+for server_url, filename, extract_subdir in download_targets:
+    download_file(server_url, filename, install_path, extract_subdir)
 
 print("Installation complete.")

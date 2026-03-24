@@ -18,10 +18,20 @@ class PolicyServiceNode(Node):
     def __init__(self):
         super().__init__("policy_service_node")
 
+        self.declare_parameters(
+            namespace="",
+            parameters=[
+                (
+                    "model_path",
+                    "/home/min/7cmdehdrb/project_sky/src/fcn_network/resource/exported_45/policy.onnx",
+                ),
+            ],
+        )
+
         self.cb_group = ReentrantCallbackGroup()
 
         # 모델 경로 수정 필요
-        model_path = "/home/min/7cmdehdrb/project_sky/src/fcn_network/resource/exported2/policy.onnx"
+        model_path = self.get_parameter("model_path").get_parameter_value().string_value
         self.policy_manager = RLPolicyManager(model_path)
 
         # 1. 구독 (Observations)
@@ -50,7 +60,7 @@ class PolicyServiceNode(Node):
             self.get_logger().info("Node B가 켜질 때까지 기다리는 중...")
         self.get_logger().info("🟢 Node B 확인 완료!")
 
-        # 3. Main 노드를 위한 서비스 서버 오픈
+        # 3. Main 노드를 위한n 서비스 서버 오픈
         self.srv = self.create_service(
             GetPolicyAction,
             "get_policy_action",
@@ -58,6 +68,9 @@ class PolicyServiceNode(Node):
             callback_group=self.cb_group,
         )
         self.get_logger().info("🟢 Node A (Policy Server) 준비 완료. 요청 대기 중...")
+
+        self.get_logger().info("RL Policy Manager 초기화 완료.")
+        self.get_logger().info(f"모델 경로: {model_path}")
 
     def distance_callback(self, msg: Float32MultiArray):
         # Float Array -> Policy Manager 저장
@@ -77,7 +90,7 @@ class PolicyServiceNode(Node):
 
         # 1. Node B(FCN)에 결과 요청
         fcn_req = GetFCNResult.Request()
-        fcn_req.weight = [1.0, 1.0, 1.0, 1.0]  # 기본 가중치
+        fcn_req.weight = [1.0, 1.0, 1.0, 1.0, 1.0]  # 기본 가중치
         fcn_req.target_class_idx = target_id
 
         self.get_logger().info(f"   -> Node B에 FCN 결과 요청 중...")

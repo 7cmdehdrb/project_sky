@@ -35,6 +35,10 @@ setup(
         "console_scripts": [
             "fcn_server = fcn_network.fcn_server:main",
             "pointcloud_grid_identifier_server = fcn_network.pointcloud_grid_identifier_server:main",
+            "drl_node = fcn_network.drl_node:main",
+            "drop_grid_node = fcn_network.drop_grid_node:main",
+            "grid_node = fcn_network.grid_node:main",
+            "fcn_node = fcn_network.fcn_node:main",
         ],
     },
 )

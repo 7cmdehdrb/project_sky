@@ -40,6 +40,9 @@ setup(
             "object_pose_estimation_server = object_tracker.object_pose_estimation_server:main",
             "pointcloud_pose_estimation_server = object_tracker.pointcloud_pose_estimation_server:main",
             "closest_object_classifier = object_tracker.closest_object_classifier:main",
+            "closest_object_node = object_tracker.closest_object_node:main",
+            "yolo_node = object_tracker.yolo_node:main",
+            "integration_image_node = object_tracker.integration_image_node:main",
         ],
     },
 )

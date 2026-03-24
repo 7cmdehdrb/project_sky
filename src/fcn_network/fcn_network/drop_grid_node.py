@@ -20,14 +20,20 @@ import time
 
 
 class DropGridNode(Node):
-    def __init__(self, grid_json_path: str):
+    def __init__(self):
         super().__init__("drop_grid_node")
 
-        self._grid_json_path = grid_json_path
-        self.get_logger().info(f"DropGridManager 초기화 중... (경로: {grid_json_path})")
+        self.declare_parameter(
+            "drop_grid_json_path",
+            "/home/min/7cmdehdrb/project_sky/src/fcn_network/resource/drop_grid_data.json",
+        )
+
+        self._grid_json_path = (
+            self.get_parameter("drop_grid_json_path").get_parameter_value().string_value
+        )
 
         self.drop_grid_manager = DropGridManager(
-            resource_path=grid_json_path,
+            resource_path=self._grid_json_path,
             priority=DropPriority.COL_FIRST,
             row_dir=DropDirection.FORWARD,
             col_dir=DropDirection.FORWARD,
@@ -45,6 +51,10 @@ class DropGridNode(Node):
             GetNextDropCell, "request_drop_cell", self.handle_drop_request
         )
         self.get_logger().info("Service Server 'request_drop_cell' 가 준비되었습니다.")
+
+        self.get_logger().info(
+            f"DropGridManager 초기화 완료 (경로: {self._grid_json_path})"
+        )
 
     # --- 추가 2: Service Callback ---
     def handle_drop_request(
@@ -104,11 +114,7 @@ class DropGridNode(Node):
 def main(args=None):
     rclpy.init(args=args)
 
-    # JSON 파일 경로
-    json_path = (
-        "/home/min/7cmdehdrb/project_sky/src/fcn_network/resource/drop_grid_data.json"
-    )
-    node = DropGridNode(grid_json_path=json_path)
+    node = DropGridNode()
 
     import threading
 

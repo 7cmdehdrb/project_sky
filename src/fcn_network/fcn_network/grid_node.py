@@ -16,13 +16,19 @@ from base_package.transform_manager import TransformManager
 
 
 class GridDistancePublisherNode(Node):
-    def __init__(self, grid_json_path: str):
+    def __init__(self):
         super().__init__("grid_distance_publisher_node")
 
-        self._grid_json_path = grid_json_path
-        self.get_logger().info(f"GridManager 초기화 중... (경로: {grid_json_path})")
+        self.declare_parameter(
+            "grid_json_path",
+            "/home/min/7cmdehdrb/project_sky/src/fcn_network/resource/grid_data.json",
+        )
 
-        self.grid_manager = GridManager(resource_path=grid_json_path)
+        self._grid_json_path = (
+            self.get_parameter("grid_json_path").get_parameter_value().string_value
+        )
+
+        self.grid_manager = GridManager(resource_path=self._grid_json_path)
         self.transform_manager = TransformManager(node=self)
 
         # 2. 데이터 버퍼 (가장 최근 수신된 PointCloud2 메세지 저장)
@@ -53,6 +59,9 @@ class GridDistancePublisherNode(Node):
         self.timer = self.create_timer(0.5, self.process_and_publish)
 
         self.get_logger().info("🟢 Grid Distance Publisher 노드 준비 완료.")
+        self.get_logger().info(
+            f"GridManager 초기화 완료 (경로: {self._grid_json_path})"
+        )
 
     def pc_callback(self, msg: PointCloud2):
         """메세지 수신 시 버퍼에 최신화만 수행 (비동기 처리 최적화)"""
@@ -125,9 +134,7 @@ class GridDistancePublisherNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = GridDistancePublisherNode(
-        grid_json_path="/home/min/7cmdehdrb/project_sky/src/fcn_network/resource/grid_data.json"
-    )
+    node = GridDistancePublisherNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

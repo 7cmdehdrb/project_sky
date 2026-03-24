@@ -172,6 +172,9 @@ class FCNManager:
 
     def apply_weights(self, data: list, weights: list) -> np.ndarray:
         """동적으로 계산된 구역의 최대값 데이터에 각각 커스텀 가중치를 곱해줍니다."""
+        print(f"원본 데이터: {data}")
+        print(f"적용할 가중치: {weights}")
+
         if len(data) != len(weights):
             raise ValueError(
                 f"데이터 구역 수({len(data)})와 가중치 길이({len(weights)})가 동일해야 합니다."
@@ -187,12 +190,18 @@ class FCNManager:
 
         :return: (1차원 PDM 배열, 인접 구역 리스트, 가중치가 적용된 N구역 최댓값, 메인 타겟 인덱스, 원본 타겟 클래스 맵)
         """
+
         # 경계선 개수에서 1을 빼면 실제 구역(Column)의 개수가 됩니다.
         num_peaks = len(self._peak_boundaries) - 1
         target_map, one_d_pdm = self.get_1d_pdm(results, target_class_idx)
 
         # 가변 구역(긴빠이)의 최댓값 탐색 및 가중치 적용
         max_peak_data = self.find_top_peaks_ginppai(one_d_pdm)
+
+        if len(max_peak_data) < len(weights):
+            # Max peak가 Weights 보다 적으면, weights의 초과분은 무시하
+            weights = weights[: len(max_peak_data)]
+
         weighted_peak_data = self.apply_weights(max_peak_data, weights)
 
         # 가장 값이 높은 구역을 최종 메인 타겟으로 선정
