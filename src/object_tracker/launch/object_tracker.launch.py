@@ -3,6 +3,8 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
+    root_dir = "/home/min/7cmdehdrb/project_sky"
+
     closest_object_node = Node(
         package="object_tracker",
         executable="closest_object_node",
@@ -23,8 +25,8 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "model_file": "/home/irol/project_sky/src/object_tracker/resource/best_hg.pt",
-                "obj_bounds_file": "/home/irol/project_sky/src/object_tracker/resource/obj_bounds.json",
+                "model_file": f"{root_dir}/src/object_tracker/resource/best_hg.pt",
+                "obj_bounds_file": f"{root_dir}/src/object_tracker/resource/obj_bounds.json",
                 "conf_threshold": 0.7,
             }
         ],

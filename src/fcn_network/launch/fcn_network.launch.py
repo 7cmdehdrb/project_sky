@@ -3,6 +3,8 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
+    root_dir = "/home/min/7cmdehdrb/project_sky"
+
     drl_node = Node(
         package="fcn_network",
         executable="drl_node",
@@ -10,7 +12,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "model_path": "/home/irol/project_sky/src/fcn_network/resource/exported/policy.onnx",
+                "model_path": f"{root_dir}/src/fcn_network/resource/exported/policy.onnx",
             }
         ],
     )
@@ -22,7 +24,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "drop_grid_json_path": "/home/irol/project_sky/src/fcn_network/resource/drop_grid_data.json",
+                "drop_grid_json_path": f"{root_dir}/src/fcn_network/resource/drop_grid_data.json",
             }
         ],
     )
@@ -36,7 +38,7 @@ def generate_launch_description():
             {
                 "fcn_gain": 2.0,
                 "fcn_gamma": 0.7,
-                "model_path": "/home/irol/project_sky/src/fcn_network/resource/best_model_3x4_ratio,O2,S8.pth",
+                "model_path": f"{root_dir}/src/fcn_network/resource/best_model.pth",
                 "fcn_image_transform": True,
                 # "peak_boundaries": [0, 128, 256, 384, 512, 640],
                 "peak_boundaries": [0, 170, 300, 460, 640],
@@ -51,8 +53,8 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                # "grid_json_path": "/home/irol/project_sky/src/fcn_network/resource/grid_data34.json",
-                "grid_json_path": "/home/irol/project_sky/src/fcn_network/resource/grid_data.json",
+                # "grid_json_path": f"{root_dir}/src/fcn_network/resource/grid_data34.json",
+                "grid_json_path": f"{root_dir}/src/fcn_network/resource/grid_data.json",
             }
         ],
     )
