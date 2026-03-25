@@ -88,6 +88,27 @@ class ObjectManager:
             }
         )
 
+        self.names = SmartNameDict(
+            {
+                "can_1": "coca_cola",
+                "can_2": "cyder",
+                "can_3": "yello_peach",
+                "can_4": "catata",
+                "cup_1": "cup_sky",
+                "cup_2": "cup_white",
+                "cup_3": "cup_blue",
+                "cup_4": "cup_green",
+                "mug_1": "mug_black",
+                "mug_2": "mug_gray",
+                "mug_3": "mug_yello",
+                "mug_4": "mug_orange",
+                "bottle_1": "alive",
+                "bottle_2": "green_tea",
+                "bottle_3": "yello_smoothie",
+                "bottle_4": "bottle_red",
+            }
+        )
+
         # 기타 인덱스 맵핑은 .data (순수 dict)를 기반으로 기존과 동일하게 생성
         self.classes = {v: k for k, v in self.names.data.items()}
         self.indexs = {k: i for i, k in enumerate(self.names.data.keys())}
