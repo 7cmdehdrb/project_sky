@@ -308,3 +308,4 @@ AMENT_IGNORE
 /.vscode
 /third_party
 /src/IGNORE
+*.onnx

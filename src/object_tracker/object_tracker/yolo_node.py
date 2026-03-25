@@ -99,7 +99,7 @@ class RealTimeSegmentationNode(Node):
             parameters=[
                 (
                     "model_file",
-                    "/home/min/7cmdehdrb/project_sky/src/object_tracker/resource/best_hg.pt",
+                    "/home/min/7cmdehdrb/project_sky/src/object_tracker/resource/Yolo/weights_24/weights/best.pt",
                 ),
                 (
                     "obj_bounds_file",
@@ -209,16 +209,16 @@ class RealTimeSegmentationNode(Node):
             desired_data = self._obj_bounds.get(clean_cls)
             difference_ratio = 1.0  # 기본값 (json에 데이터가 없을 경우 등)
 
-            if desired_data:
-                numerator = (float(desired_data["x"]) + float(desired_data["z"])) / 2.0
-                denominator = float(desired_data["y"])
-                desired_ratio = numerator / denominator
+            # if desired_data:
+            #     numerator = (float(desired_data["x"]) + float(desired_data["z"])) / 2.0
+            #     denominator = float(desired_data["y"])
+            #     desired_ratio = numerator / denominator
 
-                difference_ratio = (
-                    detected_ratio / desired_ratio
-                    if detected_ratio > desired_ratio
-                    else desired_ratio / detected_ratio
-                )
+            #     difference_ratio = (
+            #         detected_ratio / desired_ratio
+            #         if detected_ratio > desired_ratio
+            #         else desired_ratio / detected_ratio
+            #     )
 
             # 4. BoundingBox 메시지 생성 (깔끔해진 이름 사용)
             mask_flat = []
