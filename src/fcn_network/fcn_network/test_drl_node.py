@@ -17,14 +17,15 @@ class MockMainNode(Node):
         self.get_logger().info("🟢 Node A 확인 완료! 5초마다 제어 요청을 시작합니다.")
 
         self.request_count = 0
+
         # 5초 타이머 주기적 실행
-        self.timer = self.create_timer(5.0, self.send_request)
+        # self.timer = self.create_timer(5.0, self.send_request)
 
     def send_request(self):
         self.request_count += 1
 
         # 임의의 Target ID 생성 (예: 1~3 순환)
-        dummy_target_id = (self.request_count % 3) + 1
+        dummy_target_id = 0
 
         req = GetPolicyAction.Request()
         req.target_id = dummy_target_id

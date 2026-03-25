@@ -10,7 +10,8 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "boundary": [128, 256, 384, 512],
+                # "boundary": [128, 256, 384, 512],
+                "boundary": [170, 300, 460],
             }
         ],
     )
@@ -22,8 +23,8 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "model_file": "/home/min/7cmdehdrb/project_sky/src/object_tracker/resource/best_hg.pt",
-                "obj_bounds_file": "/home/min/7cmdehdrb/project_sky/src/object_tracker/resource/obj_bounds.json",
+                "model_file": "/home/irol/project_sky/src/object_tracker/resource/best_hg.pt",
+                "obj_bounds_file": "/home/irol/project_sky/src/object_tracker/resource/obj_bounds.json",
                 "conf_threshold": 0.7,
             }
         ],

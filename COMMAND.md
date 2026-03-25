@@ -6,6 +6,12 @@ ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.ena
 `
 
 `
+cd /home/irol/test
+source install/setup.bash
+ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.enable:=true rgb_camera.color_profile:="1280,720,30" depth_module.depth_profile:="1280,720,30" rgb_camera.enable_auto_exposure:=false rgb_camera.exposure:="100"
+`
+
+`
 python3 /home/min/7cmdehdrb/project_sky/src/test/integration_image_node.py
 `
 
