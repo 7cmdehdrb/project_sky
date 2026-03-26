@@ -20,16 +20,16 @@ from typing import Tuple
 class FCNModel(nn.Module):
     """
     ResNet50 기반의 Fully Convolutional Network (FCN) 모델.
-    12개의 클래스(채널)를 출력하도록 마지막 분류기(classifier)가 수정되었습니다.
+    layer_cnt개의 클래스(채널)를 출력하도록 마지막 분류기(classifier)가 수정되었습니다.
     """
 
-    def __init__(self):
+    def __init__(self, layer_cnt: int = 12):
         super(FCNModel, self).__init__()
         # Pretrained 가중치 없이 기본 모델 뼈대 생성
         self.model = fcn_resnet50(weights=None)
 
-        # 출력 채널 수를 12개로 맞추기 위해 1x1 합성곱 레이어 수정
-        self.model.classifier[4] = nn.Conv2d(512, 12, kernel_size=1)
+        # 출력 채널 수를 layer_cnt개로 맞추기 위해 1x1 합성곱 레이어 수정
+        self.model.classifier[4] = nn.Conv2d(512, layer_cnt, kernel_size=1)
 
     def forward(self, x: Tensor) -> Tensor:
         # FCN 출력 중 메인 결과인 'out' 텐서만 반환
@@ -48,8 +48,10 @@ class FCNManager:
         fcn_gamma: float,
         model_path: str,
         fcn_image_transform: bool = True,
+        layer_cnt: int = 12,
     ):
         self._node: Node = node
+        self._layer_cnt = layer_cnt
 
         self._device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self._last_results_data: np.ndarray = None
@@ -74,7 +76,7 @@ class FCNManager:
 
     def _setup_model(self, model_path: str) -> FCNModel:
         """가중치를 로드하고 필터링한 뒤, 모델을 평가 모드(eval)로 설정합니다."""
-        model = FCNModel()
+        model = FCNModel(layer_cnt=self._layer_cnt)
         state_dict: dict[str, torch.Tensor] = torch.load(
             model_path, map_location=self._device
         )

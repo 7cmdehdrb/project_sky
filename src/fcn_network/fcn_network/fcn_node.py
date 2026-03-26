@@ -71,12 +71,23 @@ class FCNServiceNode(Node):
             .integer_array_value
         )
 
+        if len(peak_boundaries) == 6:
+            layer_cnt = 16  # 5개 구간 + 1개 여분
+        elif len(peak_boundaries) == 5:
+            layer_cnt = 12  # 4개 구간 + 1개 여분
+        else:
+            self.get_logger().error(
+                "Peak boundaries should have 5 or 6 values. Check the parameter configuration."
+            )
+            raise ValueError("Invalid peak boundaries length")
+
         self.fcn_manager = FCNManager(
             node=self,
             fcn_gain=fcn_gain,
             fcn_gamma=fcn_gamma,
             model_path=model_path,
             fcn_image_transform=fcn_image_transform,
+            layer_cnt=layer_cnt,
         )
         self.fcn_manager.peak_boundaries = peak_boundaries
 

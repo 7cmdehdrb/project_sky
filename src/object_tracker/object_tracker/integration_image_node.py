@@ -38,12 +38,7 @@ class IntegrationImageNode(Node):
         self._segmentation_image: Image = None
         self._1d_fcn_processed_image: Image = None
         self._2d_fcn_processed_image: Image = None
-
-        response = __import__("urllib.request", fromlist=["urlopen"]).urlopen(
-            "https://images.velog.io/images/717lumos/post/8715706d-f855-4211-8bba-3ddeede780c4/%EA%B7%B8%EB%A6%BC1.png"
-        )
-        img_array = np.asarray(bytearray(response.read()), dtype=np.uint8)
-        self._ros_image: np.ndarray = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        self._top_view_image: Image = None
 
         self._image_manager = ImageManager(
             node=self,
@@ -67,6 +62,10 @@ class IntegrationImageNode(Node):
                 {
                     "topic_name": "/fcn_service_node/target_map_visualization",
                     "callback": self._callback_2d_fcn_processed_image,
+                },
+                {
+                    "topic_name": "/action_cam_node/top_view_image",
+                    "callback": self._callback_top_view_image,
                 },
             ],
             published_topics=[
@@ -94,45 +93,8 @@ class IntegrationImageNode(Node):
     def _callback_2d_fcn_processed_image(self, msg: Image):
         self._2d_fcn_processed_image = msg
 
-    def _post_process_png(self, msg: np.ndarray):
-        if msg is None:
-            return np.zeros((480, 640, 3), dtype=np.uint8)
-
-        h, w = msg.shape[:2]
-        target_ratio = 640 / 480
-
-        current_ratio = w / h
-
-        if current_ratio > target_ratio:
-            # wider than target: add padding to top and bottom
-            new_h = int(w / target_ratio)
-            pad_top = (new_h - h) // 2
-            pad_bottom = new_h - h - pad_top
-            msg = cv2.copyMakeBorder(
-                msg,
-                pad_top,
-                pad_bottom,
-                0,
-                0,
-                cv2.BORDER_CONSTANT,
-                value=(255, 255, 255),
-            )
-        elif current_ratio < target_ratio:
-            # taller than target: add padding to left and right
-            new_w = int(h * target_ratio)
-            pad_left = (new_w - w) // 2
-            pad_right = new_w - w - pad_left
-            msg = cv2.copyMakeBorder(
-                msg,
-                0,
-                0,
-                pad_left,
-                pad_right,
-                cv2.BORDER_CONSTANT,
-                value=(255, 255, 255),
-            )
-
-        return cv2.resize(msg, (640, 480))
+    def _callback_top_view_image(self, msg: Image):
+        self._top_view_image = msg
 
     def _post_process_images(self, msg: Image):
         if msg is None:
@@ -163,7 +125,7 @@ class IntegrationImageNode(Node):
             self._2d_fcn_processed_image
         )
 
-        np_ros_image = self._post_process_png(self._ros_image)
+        np_top_view_image = self._post_process_images(self._top_view_image)
 
         top_integrated_image = np.hstack(
             [
@@ -177,7 +139,7 @@ class IntegrationImageNode(Node):
             [
                 np_1d_fcn_processed_image,
                 np_2d_fcn_processed_image,
-                np_ros_image,
+                np_top_view_image,
             ]
         )
 

@@ -3,7 +3,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    root_dir = "/home/min/7cmdehdrb/project_sky"
+    root_dir = "/home/irol/DRL-Occluded-Object-Search"
 
     closest_object_node = Node(
         package="object_tracker",
@@ -12,8 +12,8 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                # "boundary": [128, 256, 384, 512],
-                "boundary": [170, 300, 460],
+                "boundary": [170, 270, 384, 480], # for 5 columns
+                # "boundary": [170, 300, 460], # for 4 columns
             }
         ],
     )
@@ -25,7 +25,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "model_file": f"{root_dir}/src/object_tracker/resource/best_hg.pt",
+                "model_file": f"{root_dir}/src/object_tracker/resource/best_yolo45_new.pt", # best_hg.pt
                 "obj_bounds_file": f"{root_dir}/src/object_tracker/resource/obj_bounds.json",
                 "conf_threshold": 0.7,
             }

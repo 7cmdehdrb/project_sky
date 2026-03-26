@@ -90,23 +90,23 @@ class ObjectManager:
 
         self.names = SmartNameDict(
             {
-                "can_1": "coca_cola",
-                "can_2": "sikhye",
-                "can_3": "yello_peach",
-                "can_4": "cantata",
-                "cup_1": "cup_sky",
-                "cup_2": "cup_white",
-                "cup_3": "cup_blue",
-                "cup_4": "cup_green",
-                "mug_1": "mug_black",
-                "mug_2": "mug_gray",
-                "mug_3": "mug_yello",
-                "mug_4": "mug_orange",
-                "bottle_1": "alive",
-                "bottle_2": "green_tea",
-                "bottle_3": "yello_smoothie",
-                "bottle_4": "bottle_red",
-                "can_5": "cyder",
+                "can_1": "coca_cola", # 0
+                "can_2": "sikhye", # 1
+                "can_3": "yello_peach", # 2
+                "can_4": "cantata", # 3
+                "cup_1": "cup_sky", # 4
+                "cup_2": "cup_white", # 5
+                "cup_3": "cup_blue", # 6
+                "cup_4": "cup_green", # 7
+                "mug_1": "mug_black", # 8
+                "mug_2": "mug_gray", # 9
+                "mug_3": "mug_yello", # 10
+                "mug_4": "mug_orange", # 11
+                "bottle_1": "alive", # 12
+                "bottle_2": "green_tea", # 13
+                "bottle_3": "yello_smoothie", # 14 
+                "bottle_4": "bottle_red",# 15
+                "can_5": "cyder", # 16
             }
         )
 
