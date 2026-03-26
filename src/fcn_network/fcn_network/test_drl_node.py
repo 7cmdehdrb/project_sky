@@ -32,11 +32,12 @@ from base_package.image_manager import ImageManager
 
 class ImageLogger:
     def __init__(self, node: Node, col_num: int = 4):
+        # 기본 인자
         self._node = node
         self._col_num = col_num
 
+        # >>> 로그용 인자 >>>
         ROOT_DIR = "/home/min/7cmdehdrb/project_sky/src/fcn_network/log"
-
         existing_dirs = [
             d
             for d in os.listdir(ROOT_DIR)
@@ -46,16 +47,20 @@ class ImageLogger:
             [int(d.split("_")[1]) for d in existing_dirs if d.split("_")[1].isdigit()]
         )
         next_num = (existing_nums[-1] if existing_nums else -1) + 1
-
         self._log_dir = os.path.join(ROOT_DIR, f"exp_{next_num:03d}")
-        os.makedirs(self._log_dir, exist_ok=True)
+        # <<< 로그용 인자 <<<
 
+        # >>> 로깅 시작 >>>
+        os.makedirs(self._log_dir, exist_ok=True)
         logger.add(
             os.path.join(self._log_dir, "image_log_{time}.log"),
             format="{message}",
             level="INFO",
         )
         logger.info(f"step,target_id,action,target_column,1d_pdm")
+        # <<< 로깅 시작 <<<
+
+        # >>> ROS Subscriber & Publisher 초기화 >>>
 
         self._raw_image: Image = None
         self._closest_image: Image = None
@@ -101,6 +106,30 @@ class ImageLogger:
             qos_profile=qos_profile_system_default,
             callback=self._callback_1d_pdm,
         )
+        # <<< ROS Subscriber & Publisher 초기화 <<<
+
+        # >>> Tlqkf >>>
+        self._cnt_sub = self._node.create_subscription(
+            Int32,
+            "/fcn_service_node/cnt",
+            qos_profile=qos_profile_system_default,
+            callback=self._callback_cnt,
+        )
+
+        # 외부에서 값을 부여할 것
+        self.step = 0
+        self.target_id = 0
+        self.action = 0
+        self.target_column = 0
+
+        # 디버깅용 카운트 및 트리거 플래그
+        self._cnt = -1
+        self._trigger = False
+        self._trigger_time = time.time()
+        # <<< Tlqkf <<<
+
+        # HZ: 2
+        self._timer = self._node.create_timer(0.5, self.run)
 
     def _reset(self):
         self._raw_image = None
@@ -110,6 +139,21 @@ class ImageLogger:
         self._2d_fcn_processed_image = None
         self._top_view_image = None
         self._1d_pdm_value = None
+
+    def run(self):
+        # timer 를 써서 주기적으로 회전 시킬 함수
+        # self._trigger가 True + trigger time 과 3초 이상 차이날 때 로그를 기록하고 _trigger는 False로 바꿔주는 함수
+        if self._trigger and (time.time() - self._trigger_time) > 3.0:
+            self.log()
+            self._trigger = False
+
+    def _callback_cnt(self, msg: Int32):
+        data = msg.data
+        if data != self._cnt:
+            # 카운트가 변경될 때마다 로그에 기록
+            self._cnt = data
+            self._trigger = True
+            self._trigger_time = time.time()
 
     def _callback_raw_image(self, msg: Image):
         self._raw_image = msg
@@ -148,86 +192,47 @@ class ImageLogger:
 
         return np_image
 
-    def log(self, step: int, target_id: int, action: int, target_column: int):
-        start_time = time.time()
-        timeout_sec = 3.0  # 최대 5초까지만 대기
+    def log(self):
+        raw_image = self._post_process_images(self._raw_image)
+        closest_image = self._post_process_images(self._closest_image)
+        segmentation_image = self._post_process_images(self._segmentation_image)
+        fcn_1d_image = self._post_process_images(self._1d_fcn_processed_image)
+        fcn_2d_image = self._post_process_images(self._2d_fcn_processed_image)
+        top_view_image = self._post_process_images(
+            self._top_view_image, ignore_none=True
+        )
+        processed_1d_pdm = f"{'; '.join(f'{v:.2f}' for v in self._1d_pdm_value.data)}"
 
-        # ✅ 타임아웃 및 누락 토픽 체크 로직 추가
-        while True:
-            raw_image = self._post_process_images(self._raw_image)
-            closest_image = self._post_process_images(self._closest_image)
-            segmentation_image = self._post_process_images(self._segmentation_image)
-            fcn_1d_image = self._post_process_images(self._1d_fcn_processed_image)
-            fcn_2d_image = self._post_process_images(self._2d_fcn_processed_image)
-            top_view_image = self._post_process_images(
-                self._top_view_image, ignore_none=True
+        if (
+            any(
+                img is None
+                for img in [
+                    raw_image,
+                    closest_image,
+                    segmentation_image,
+                    fcn_1d_image,
+                    fcn_2d_image,
+                ]
             )
+            or self._1d_pdm_value is None
+        ):
+            return None
 
-            missing_topics = []
-            if raw_image is None:
-                missing_topics.append("raw")
-            if closest_image is None:
-                missing_topics.append("closest")
-            if segmentation_image is None:
-                missing_topics.append("segmentation")
-            if fcn_1d_image is None:
-                missing_topics.append("fcn_1d")
-            if fcn_2d_image is None:
-                missing_topics.append("fcn_2d")
-            if top_view_image is None:
-                missing_topics.append("top_view")
-            if self._1d_pdm_value is None:
-                missing_topics.append("1d_pdm")
+        images_to_save = [
+            (raw_image, "raw"),
+            (closest_image, "closest"),
+            (segmentation_image, "segmentation"),
+            (fcn_1d_image, "fcn_1d"),
+            (fcn_2d_image, "fcn_2d"),
+            (top_view_image, "top_view"),
+        ]
 
-            # 모든 이미지가 다 들어왔으면 탈출
-            if not missing_topics:
-                self._node.get_logger().info(
-                    f"📸 [{step}번째] 모든 이미지 수신 완료! 저장 진행."
-                )
-                break
+        for image, name in images_to_save:
+            cv2.imwrite(os.path.join(self._log_dir, f"{self.step}_{name}.png"), image)
 
-            # 지정된 시간을 초과하면 경고를 띄우고 탈출 (들어온 것만이라도 저장)
-            if time.time() - start_time > timeout_sec:
-                self._node.get_logger().error(
-                    f"⚠️ [{step}번째] 이미지 수신 타임아웃! 누락된 토픽: {missing_topics}. 수신된 이미지만 저장합니다."
-                )
-                break
-
-            time.sleep(0.1)
-
-        if raw_image is not None:
-            cv2.imwrite(os.path.join(self._log_dir, f"{step}_raw.png"), raw_image)
-
-        if closest_image is not None:
-            cv2.imwrite(
-                os.path.join(self._log_dir, f"{step}_closest.png"), closest_image
-            )
-
-        if segmentation_image is not None:
-            cv2.imwrite(
-                os.path.join(self._log_dir, f"{step}_segmentation.png"),
-                segmentation_image,
-            )
-
-        if fcn_1d_image is not None:
-            cv2.imwrite(os.path.join(self._log_dir, f"{step}_fcn_1d.png"), fcn_1d_image)
-
-        if fcn_2d_image is not None:
-            cv2.imwrite(os.path.join(self._log_dir, f"{step}_fcn_2d.png"), fcn_2d_image)
-
-        if top_view_image is not None:
-            cv2.imwrite(
-                os.path.join(self._log_dir, f"{step}_top_view.png"), top_view_image
-            )
-
-        if self._1d_pdm_value is not None:
-            processed_1d_pdm = (
-                f"{'; '.join(f'{v:.2f}' for v in self._1d_pdm_value.data)}"
-            )
-        else:
-            processed_1d_pdm = f"{'; '.join(f'{v:.2f}' for v in [0.0] * self._col_num)}"
-
-        logger.info(f"{step},{target_id},{action},{target_column},{processed_1d_pdm}")
+        logger.info(
+            f"{self.step},{self.target_id},{self.action},{self.target_column},{processed_1d_pdm}"
+        )
 
         self._reset()
 

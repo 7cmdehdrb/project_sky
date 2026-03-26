@@ -103,6 +103,9 @@ class FCNServiceNode(Node):
             self.get_name() + "/one_d_pdm",
             qos_profile=qos_profile_system_default,
         )
+        self._cnt_publisher = self.create_publisher(
+            Int32, self.get_name() + "/cnt", qos_profile=qos_profile_system_default
+        )
 
         # --- 3. 서비스 서버 오픈 (요청 대기) ---
         self.srv = self.create_service(
@@ -113,11 +116,15 @@ class FCNServiceNode(Node):
         )
 
         # --- 4. 시각화 퍼블리싱 타이머 (1Hz) ---
+        self._cnt = 0
         self.timer = self.create_timer(
             0.5, self.publish_visualization, callback_group=self.timer_cb_group
         )
         self.timer2 = self.create_timer(
             0.5, self.publish_1d_pdm, callback_group=self.timer_cb_group
+        )
+        self.timer3 = self.create_timer(
+            5.0, self.publish_cnt, callback_group=self.timer_cb_group
         )
 
         self.get_logger().info(
@@ -185,6 +192,8 @@ class FCNServiceNode(Node):
         # NumPy 배열을 Python 리스트(float)로 변환하여 할당
         response.data = weighted_peak_data.tolist()
 
+        self._cnt += 1  # 디버깅용 카운트 증가
+
         self.get_logger().info(f"[B] 추론 완료. 결과: {response.data}")
         return response
 
@@ -199,6 +208,12 @@ class FCNServiceNode(Node):
 
         # 토픽 발행
         self._1d_pdm_publisher.publish(pdm_msg)
+
+    def publish_cnt(self):
+        """1초 주기로 카운트 발행 (디버깅용)"""
+        cnt_msg = Int32()
+        cnt_msg.data = self._cnt
+        self._cnt_publisher.publish(cnt_msg)
 
     def publish_visualization(self):
         """1초 주기로 1D PDM 그래프를 렌더링하여 ROS Image로 발행"""
