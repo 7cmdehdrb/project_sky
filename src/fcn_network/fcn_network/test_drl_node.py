@@ -129,7 +129,6 @@ class ImageLogger:
         # <<< Tlqkf <<<
 
         # HZ: 2
-        self._timer = self._node.create_timer(0.5, self.run)
 
     def _reset(self):
         self._raw_image = None
@@ -273,6 +272,8 @@ class MockMainNode(Node):
 
         self.request_count = 0
 
+        self._timer = self.create_timer(0.5, self._image_logger.run)
+
     def send_request(self):
         self.request_count += 1
         self._image_logger._reset()
@@ -313,13 +314,10 @@ class MockMainNode(Node):
                 f"{action_str} -> {visual_str}"
             )
 
-            # ✅ ROS Executor의 스레드 점유를 완전히 피하기 위해 Python 스레드로 분리합니다.
-            log_thread = threading.Thread(
-                target=self._image_logger.log,
-                args=(req_num, self._target_id, action, col),
-                daemon=True,
-            )
-            log_thread.start()
+            self._image_logger.step = req_num
+            self._image_logger.target_id = self._target_id
+            self._image_logger.action = action
+            self._image_logger.target_column = col
 
         except Exception as e:
             self.get_logger().error(f"❌ [Main] {req_num}번째 호출 실패: {e}")
