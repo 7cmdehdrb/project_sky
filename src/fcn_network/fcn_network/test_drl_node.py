@@ -37,7 +37,7 @@ class ImageLogger:
         self._col_num = col_num
 
         # >>> 로그용 인자 >>>
-        ROOT_DIR = "/home/min/7cmdehdrb/project_sky/src/fcn_network/log"
+        ROOT_DIR = "/home/irol/DRL-Occluded-Object-Search/src/fcn_network/log"
         existing_dirs = [
             d
             for d in os.listdir(ROOT_DIR)
@@ -123,9 +123,9 @@ class ImageLogger:
         self.target_column = 0
 
         # 디버깅용 카운트 및 트리거 플래그
-        self._cnt = -1
+        self._cnt = 0
         self._trigger = False
-        self._trigger_time = time.time()
+        self._trigger_time = None
         # <<< Tlqkf <<<
 
         # HZ: 2
@@ -142,13 +142,21 @@ class ImageLogger:
     def run(self):
         # timer 를 써서 주기적으로 회전 시킬 함수
         # self._trigger가 True + trigger time 과 3초 이상 차이날 때 로그를 기록하고 _trigger는 False로 바꿔주는 함수
+        # print(self._trigger)
+        # print(self._trigger_time, (time.time() - self._trigger_time) if self._trigger_time else None)
+        
+        if self._trigger_time is None:
+            return
+        
         if self._trigger and (time.time() - self._trigger_time) > 3.0:
             self.log()
             self._trigger = False
+            self._trigger_time = None
 
     def _callback_cnt(self, msg: Int32):
         data = msg.data
         if data != self._cnt:
+            self._node.get_logger().info(f"카운트 변경 감지: {self._cnt} -> {data}")
             # 카운트가 변경될 때마다 로그에 기록
             self._cnt = data
             self._trigger = True
@@ -324,11 +332,12 @@ class MockMainNode(Node):
 
 
 def main(args=None):
-    NUM_COLUMNS = 4
+    TARGET_ID = 12
+    NUM_COLUMNS = 5
 
     rclpy.init(args=args)
     try:
-        node = MockMainNode(target_id=0, num_columns=NUM_COLUMNS)
+        node = MockMainNode(target_id=TARGET_ID, num_columns=NUM_COLUMNS)
     except ValueError as e:
         print(f"[ERROR] Failed to initialize node: {e}")
         return
