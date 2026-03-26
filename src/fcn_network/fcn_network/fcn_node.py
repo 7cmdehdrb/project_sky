@@ -2,6 +2,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.qos import qos_profile_system_default
 
 import numpy as np
 import cv2
@@ -14,6 +15,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 
 from sensor_msgs.msg import Image
+from std_msgs.msg import *
 
 # 임의의 커스텀 서비스 (환경에 맞게 수정하세요)
 from custom_msgs.srv import GetFCNResult
@@ -51,6 +53,7 @@ class FCNServiceNode(Node):
         # 메모리에 상주시킬 최신 이미지 및 PDM 데이터
         self._latest_image: np.ndarray = None
         self._latest_1d_pdm: np.ndarray = None
+        self._latest_weighted_peak_data: np.ndarray = None
         self._target_map: np.ndarray = None  # 원본 타겟 클래스 맵 (시각화용)
 
         # --- 1. FCN Manager 초기화 ---
@@ -95,6 +98,11 @@ class FCNServiceNode(Node):
                 },
             ],
         )
+        self._1d_pdm_publisher = self.create_publisher(
+            Float32MultiArray,
+            self.get_name() + "/one_d_pdm",
+            qos_profile=qos_profile_system_default,
+        )
 
         # --- 3. 서비스 서버 오픈 (요청 대기) ---
         self.srv = self.create_service(
@@ -106,7 +114,10 @@ class FCNServiceNode(Node):
 
         # --- 4. 시각화 퍼블리싱 타이머 (1Hz) ---
         self.timer = self.create_timer(
-            1.0, self.publish_visualization, callback_group=self.timer_cb_group
+            0.5, self.publish_visualization, callback_group=self.timer_cb_group
+        )
+        self.timer2 = self.create_timer(
+            0.5, self.publish_1d_pdm, callback_group=self.timer_cb_group
         )
 
         self.get_logger().info(
@@ -166,6 +177,9 @@ class FCNServiceNode(Node):
         # 시각화 타이머가 사용할 수 있도록 1D 데이터 저장
         self._latest_1d_pdm = one_d_pdm
         self._target_map = target_map  # 시각화용 원본 타겟 클래스 맵 저장
+        self._latest_weighted_peak_data = (
+            weighted_peak_data  # 시각화용 가중치 적용 데이터 저장
+        )
 
         # 4. 길이 N(4)의 float 배열 응답 생성
         # NumPy 배열을 Python 리스트(float)로 변환하여 할당
@@ -173,6 +187,18 @@ class FCNServiceNode(Node):
 
         self.get_logger().info(f"[B] 추론 완료. 결과: {response.data}")
         return response
+
+    def publish_1d_pdm(self):
+        """1초 주기로 1D PDM 데이터를 Float32MultiArray로 발행"""
+        if self._latest_1d_pdm is None:
+            return
+
+        # NumPy 배열을 Float32MultiArray 메시지로 변환
+        pdm_msg = Float32MultiArray()
+        pdm_msg.data = self._latest_weighted_peak_data.astype(np.float32).tolist()
+
+        # 토픽 발행
+        self._1d_pdm_publisher.publish(pdm_msg)
 
     def publish_visualization(self):
         """1초 주기로 1D PDM 그래프를 렌더링하여 ROS Image로 발행"""

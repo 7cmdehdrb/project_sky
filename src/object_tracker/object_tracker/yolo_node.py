@@ -99,7 +99,7 @@ class RealTimeSegmentationNode(Node):
             parameters=[
                 (
                     "model_file",
-                    "/home/min/7cmdehdrb/project_sky/src/object_tracker/resource/Yolo/weights_24/weights/best.pt",
+                    "/home/min/7cmdehdrb/project_sky/src/object_tracker/resource/Yolo/best_45_0326.pt",
                 ),
                 (
                     "obj_bounds_file",

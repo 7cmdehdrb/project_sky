@@ -82,6 +82,11 @@ def main():
         filename="best_yolo45.pt",
         install_path=install_path,
     )
+    download_file(
+        server_url="http://7cmdehdrb.iptime.org/api/public/dl/KiBU6snL",
+        filename="best_yolo45_new.pt",
+        install_path=install_path,
+    )
 
     # 필요 시 추가 파일도 여기에 등록
     # download_file("http://example.com/model2.onnx", "model2.onnx", install_path)

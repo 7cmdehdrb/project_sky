@@ -91,9 +91,9 @@ class ObjectManager:
         self.names = SmartNameDict(
             {
                 "can_1": "coca_cola",
-                "can_2": "cyder",
+                "can_2": "sikhye",
                 "can_3": "yello_peach",
-                "can_4": "catata",
+                "can_4": "cantata",
                 "cup_1": "cup_sky",
                 "cup_2": "cup_white",
                 "cup_3": "cup_blue",
@@ -106,6 +106,7 @@ class ObjectManager:
                 "bottle_2": "green_tea",
                 "bottle_3": "yello_smoothie",
                 "bottle_4": "bottle_red",
+                "can_5": "cyder",
             }
         )
 

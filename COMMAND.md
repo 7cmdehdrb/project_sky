@@ -94,3 +94,28 @@ colcon build \
 `
 LIBGL_ALWAYS_SOFTWARE=1 ros2 run moveit_setup_assistant moveit_setup_assistant
 `
+
+
+---
+
+## SSH
+
+sudo systemctl restart ssh
+sudo systemctl restart ssh.socket
+
+
+sudo systemctl start ssh
+sudo systemctl start ssh.socket
+
+sudo systemctl stop ssh
+sudo systemctl stop ssh.socket
+
+scp -P 2222 FILE ssu@dhlee04.iptime.org:/home/ssu
+
+
+scp -P 2222 /home/min/7cmdehdrb/project_sky/src/test/yolo/python_yolo.zip ssu@dhlee04.iptime.org:/home/ssu
+scp -P 2222 /home/min/7cmdehdrb/project_sky/src/test/yolo/yolo_dataset.zip ssu@dhlee04.iptime.org:/home/ssu
+
+
+/home/min/7cmdehdrb/project_sky/src/test/yolo/python_yolo.zip
+/home/min/7cmdehdrb/project_sky/src/test/yolo/yolo_dataset.zip
