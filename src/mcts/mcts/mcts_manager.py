@@ -14,7 +14,7 @@ from sensor_msgs.msg import *
 from nav_msgs.msg import *
 from visualization_msgs.msg import *
 from builtin_interfaces.msg import Duration as BuiltinDuration
-from custom_msgs.srv import GetFCNResult
+from custom_msgs.srv import GetPolicyAction
 
 # TF
 from tf2_ros import *
@@ -95,7 +95,8 @@ class ObservationManager:
         [0, 128, 256, 384, 512, 640] 
         [0, 170, 300, 460, 640]
         """
-        self._boundary = [0, 170, 300, 460, 640]
+        # self._boundary = [0, 170, 300, 460, 640]
+        self._boundary = [0, 128, 256, 384, 512, 640] 
 
         # col_idx를 key로, 해당 컬럼 내 객체 ID들을 거리가 가까운 순으로 정렬한 리스트
         self._column_sorted_objects: Dict[int, List[int]] = {}
@@ -323,6 +324,8 @@ class ObservationManager:
         }
 
     def get_observation(self, target_object_id: int) -> np.ndarray:
+        self._process_column_objects()
+
         if self._grid_volumes is None or len(self._column_sorted_objects) == 0:
             self._node.get_logger().warn(
                 "관측값을 구성하는 데 필요한 데이터가 아직 준비되지 않았습니다."
@@ -545,20 +548,23 @@ class GridState(GameState):
         현재 상태를 보기 좋게 출력하는 헬퍼 함수
         0: 빈칸, 1: 일반 물체, 2: 타겟(목표), -1: 알 수 없음
         """
-        symbols = {0: " 🔲 ", 1: " 📦 ", 2: " 🎯 ", -1: " ❓ "}
+        res = "\n"
+
+        symbols = {0: " □ ", 1: " ■ ", 2: " ◆ ", -1: " ▣ "}
         for r in range(self.rows - 1, -1, -1):
             row_str = "".join([symbols[val] for val in self.grid[r]])
-            print(f"Row {r} | {row_str}")
-        print()
+            res += f"{chr(65 + r)} | {row_str}\n"
+
+        return res
 
 
-class MCTSNode(Node):
+
+class MCTSROSNode(Node):
     def __init__(self):
         super().__init__("mcts_node")
 
         self._observation_manager = ObservationManager(self)
-        self._grid_state = GridState(grid=None, steps=0)
-        self._mcts_engine = MCTS(time_limit=5.0, exploration_constant=20.0)
+        self._mcts_engine = MCTS(time_limit=1.0, exploration_constant=20.0)
 
         # self._result_publisher = self.create_publisher(
         #     Int32MultiArray,
@@ -579,8 +585,8 @@ class MCTSNode(Node):
         )
 
         self.srv = self.create_service(
-            GetFCNResult,
-            "get_fcn_prediction",
+            GetPolicyAction,
+            "get_policy_action",
             self.handle_mcts_request,
             callback_group=self.srv_cb_group,
         )
@@ -594,10 +600,11 @@ class MCTSNode(Node):
         self._closest_object_list = msg.data
 
     def handle_mcts_request(
-        self, request: GetFCNResult.Request, response: GetFCNResult.Response
+        self, request: GetPolicyAction.Request, response: GetPolicyAction.Response
     ):
         # 1. 요청 파라미터에서 타겟 클래스 인덱스 추출
-        target_id: int = request.target_class_idx
+        
+        target_id: int = request.target_id
 
         # 2. 관측값 업데이트 및 가공
         new_grid: np.ndarray = self._observation_manager.get_observation(
@@ -606,6 +613,7 @@ class MCTSNode(Node):
 
         # 3. State 재초기화
         grid_state = GridState(grid=new_grid, steps=0)
+        self.get_logger().info(grid_state.print_grid())  # 초기 상태 출력 (디버깅용)
 
         # 4. MCTS 탐색 수행
         first_action: int = None
@@ -616,6 +624,7 @@ class MCTSNode(Node):
                 first_action = c  # 첫 번째 액션의 컬럼 인덱스 저장
 
             grid_state = grid_state.take_action(best_action)
+            self.get_logger().info(grid_state.print_grid()) 
 
         # 여러번 실행을 했고, 첫 번째 액션이 존재한다면 탐색이 정상적으로 이루어졌다고 판단
         trigger = grid_state.steps != 0 and first_action is not None
@@ -623,14 +632,25 @@ class MCTSNode(Node):
             [i for i, obj_id in enumerate(self._closest_object_list) if obj_id != -1]
         )
 
-        response.data = first_action if trigger else random_action
+        response.action_type = 0  # MCTS 탐색 결과를 사용할 때는 action_type을 0으로 설정
+
+        if trigger is True:
+            response.target_column = first_action
+            self.get_logger().info(
+                f"MCTS 탐색 완료: 첫 번째 액션 컬럼 {first_action} 선택 (타겟 ID: {target_id})"
+            )
+        else:
+            response.target_column = random_action
+            self.get_logger().warn(
+                f"MCTS 탐색 실패: 유효한 액션을 찾지 못했습니다. 랜덤 액션 컬럼 {random_action} 선택 (타겟 ID: {target_id})"
+            )
 
         return response
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = MCTSNode()
+    node = MCTSROSNode()
 
     # 비동기 서비스 처리(추론)와 타이머(시각화)가 동시에 돌아가기 위해 멀티스레드 사용
     executor = MultiThreadedExecutor()

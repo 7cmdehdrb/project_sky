@@ -280,7 +280,7 @@ class MockMainNode(Node):
 
         self.request_count = 0
 
-        self._timer = self.create_timer(0.5, self._image_logger.run)
+        # self._timer = self.create_timer(0.5, self._image_logger.run)
 
     def send_request(self):
         self.request_count += 1
