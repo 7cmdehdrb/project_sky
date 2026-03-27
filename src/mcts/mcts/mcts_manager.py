@@ -3,6 +3,8 @@ import rclpy
 from rclpy.node import Node
 from rclpy.time import Time
 from rclpy.duration import Duration
+from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, qos_profile_system_default
 
 # Message
@@ -12,6 +14,7 @@ from sensor_msgs.msg import *
 from nav_msgs.msg import *
 from visualization_msgs.msg import *
 from builtin_interfaces.msg import Duration as BuiltinDuration
+from custom_msgs.srv import GetFCNResult
 
 # TF
 from tf2_ros import *
@@ -20,6 +23,8 @@ from tf2_ros import *
 import sys
 import os
 import copy
+import random
+import math
 import numpy as np
 from enum import Enum
 import time
@@ -33,95 +38,6 @@ from base_package.image_manager import ImageManager
 from custom_msgs.msg import BoundingBox, BoundingBoxMultiArray
 
 
-import numpy as np
-
-
-class PrehensileDecisionNetwork:
-    """
-    [Prehensile Decision Network]
-    타겟 물체를 충돌 없이 잡을 수 있는지(Prehensile) 판별하는 네트워크 (구현 필요).
-    입력: object-prehensile state (n, 4) -> [x, y, z, f] / f ∈ {1, 0, -1}
-    출력이 0.5보다 크면 잡을 수 있는 것으로 간주
-    """
-
-    def __init__(self, decision_threshold: float = 0.5):
-        # 내부 상태는 모두 protected(_)로 선언
-        self._decision_threshold = decision_threshold
-        self._is_model_loaded = False  # 실제 모델 로드 여부 플래그
-
-    @property
-    def decision_threshold(self) -> float:
-        return self._decision_threshold
-
-    @decision_threshold.setter
-    def decision_threshold(self, value: float):
-        self._decision_threshold = value
-
-    @property
-    def is_model_loaded(self) -> bool:
-        return self._is_model_loaded
-
-    def predict(self, state_p: np.ndarray) -> float:
-        """
-        :param state_p: (M, 4) 형태의 Numpy 배열. [X, Y, Z, ID Feature]
-                        ID Feature는 타겟(1), 평가대상 객체(0), 그 외(-1)로 구성
-        :return: 0.0 ~ 1.0 사이의 확률(가치) 값
-        """
-        # TODO: 실제 ONNX/PyTorch 모델 추론 코드로 교체
-        # 현재는 심플하게 0.0 ~ 1.0 사이의 랜덤 값을 반환
-        random_prob = np.random.uniform(0.0, 1.0)
-        return float(random_prob)
-
-    def is_prehensile(self, state_p: np.ndarray) -> bool:
-        """
-        예측된 확률값이 임계치(0.5)보다 큰지 Boolean으로 직관적으로 리턴합니다[cite: 139].
-        """
-        return self.predict(state_p) > self._decision_threshold
-
-
-class PriorityDecisionNetwork:
-    """
-    [Priority Decision Network]
-    트리 탐색 시 어떤 물체를 먼저 치우는 것이 효율적인지 가치(Value)를 예측하는 네트워크
-    입력: object-priority state (n, 4) -> [x, y, z, f] / f ∈ {1, 0, -1}
-    출력: 행동의 기대 누적 보상 (가치)
-    """
-
-    def __init__(self, prune_threshold: float = 0.1):
-        self._prune_threshold = prune_threshold  # 논문의 delta(\delta) 값 [cite: 206]
-        self._is_model_loaded = False
-
-    @property
-    def prune_threshold(self) -> float:
-        return self._prune_threshold
-
-    @prune_threshold.setter
-    def prune_threshold(self, value: float):
-        self._prune_threshold = value
-
-    @property
-    def is_model_loaded(self) -> bool:
-        return self._is_model_loaded
-
-    def predict(self, state_q: np.ndarray) -> float:
-        """
-        :param state_q: (M, 4) 형태의 Numpy 배열. [X, Y, Z, ID Feature]
-                        ID Feature는 타겟(1), 치울 후보 객체(0), 그 외(-1)
-        :return: 행동의 기대 누적 보상 (가치). MCTS의 UCT 계산 등에 사용
-        """
-        # TODO: 실제 모델 추론 코드로 교체
-        # 논문에서 Node-action Value는 [0, 1] 범위로 클리핑 또는 정규화하여 사용하므로[cite: 194],
-        # 0.0 ~ 1.0 범위의 랜덤 Float 값을 반환하도록 합니다.
-        random_value = np.random.uniform(0.0, 1.0)
-        return float(random_value)
-
-    def should_prune(self, state_q: np.ndarray) -> bool:
-        """
-        예측된 가치(Value)가 임계치(\delta)보다 낮으면 Non-prehensile로 간주하여 가지치기(Prune) 대상으로 판별합니다 [cite: 204-207].
-        """
-        return self.predict(state_q) < self._prune_threshold
-
-
 class ObservationManager:
     """
     센서 및 노드들로부터 들어오는 관측 데이터를 모으고,
@@ -133,12 +49,7 @@ class ObservationManager:
         self._node: Node = node
 
         # >>>>> Subscriptions <<<<<
-        self._point_cloud_sub = self._node.create_subscription(
-            PointCloud2,
-            "/camera/camera1/depth/color/points",  # 실제 사용하는 뎁스 카메라 PC 토픽명으로 변경
-            self._pc_callback,
-            qos_profile=qos_profile_system_default,
-        )
+        # 가장 가까운 이미지를 파악하기 위한 Depth 이미지 구독
         self._depth_image_manager = ImageManager(
             self._node,
             subscribed_topics=[
@@ -151,12 +62,14 @@ class ObservationManager:
             *args,
             **kwargs,
         )
+        # 필드 내 존재하는 물체의 위치를 파악하기 위한 MarkerArray 구독
         self._volume_marker_sub = self._node.create_subscription(
             MarkerArray,
             "/grid_markers",
             self._volume_marker_callback,
             qos_profile=qos_profile_system_default,
         )
+        # 위에서 파악한 물체 위치에 라벨을 붙이기 위한 세그멘테이션 결과 구독
         self._segmented_bbox_sub = self._node.create_subscription(
             BoundingBoxMultiArray,
             "real_time_segmentation_node" + "/segmented_bbox",
@@ -166,30 +79,28 @@ class ObservationManager:
 
         # >>>>> ROS2 Messages <<<<<
 
-        self._point_cloud_msg: Optional[PointCloud2] = None
         self._depth_image_msg: Optional[Image] = None
         self._volume_marker_array_msg: Optional[MarkerArray] = None
         self._segmentation_msg: Optional[BoundingBoxMultiArray] = None
 
         # >>>>> Processed Data <<<<<
-        self._raw_pointcloud: Optional[np.ndarray] = None  # 호출해야 업데이트됨
         self._depth_image: Optional[np.ndarray] = None  # 호출해야 업데이트됨
         self._detected_objects: List[dict] = []  # 자동으로 업데이트 됨
-        self._grid_volumes: Dict[str, dict] = {}  # 자동으로 업데이트 됨
+        self._grid_volumes: np.ndarray = None  # 자동으로 업데이트 됨
 
         # >>>>> System Variables <<<<<
 
         # closest_object_node.py 기준 컬럼 경계선
-        self._boundary = [170, 300, 460]
+        """
+        [0, 128, 256, 384, 512, 640] 
+        [0, 170, 300, 460, 640]
+        """
+        self._boundary = [0, 170, 300, 460, 640]
 
         # col_idx를 key로, 해당 컬럼 내 객체 ID들을 거리가 가까운 순으로 정렬한 리스트
         self._column_sorted_objects: Dict[int, List[int]] = {}
 
-        # row_idx를 key로, 해당 행 내 객체 ID들을 거리가 가까운 순으로 정렬한 리스트
-        self._row_sorted_objects: Dict[str, List[int]] = {}
-
-        # 객체 ID를 key로, 세그멘테이션된 PointCloud 배열 저장
-        self._segmented_pointclouds: Dict[int, np.ndarray] = {}
+    # >>> Getter / Setter >>>
 
     @property
     def boundary(self) -> List[int]:
@@ -199,8 +110,11 @@ class ObservationManager:
     def boundary(self, value: List[int]):
         self._boundary = value
 
+    # <<< Getter / Setter <<<
+
     @property
     def column_sorted_objects(self) -> Dict[int, List[int]]:
+        # 컬럼별로 가장 가까운 객체 ID부터 순서대로 정렬된 딕셔너리 반환
         """
         return: {
             0: [obj_id1, obj_id2, ...],  # 컬럼 0에서 가장 가까운 객체 ID부터 순서대로
@@ -212,27 +126,12 @@ class ObservationManager:
 
         return self._column_sorted_objects
 
-    @property
-    def row_sorted_objects(self) -> Dict[int, List[int]]:
-        """
-        return: {
-            "A": [obj_id1, obj_id2, ...],  # Row 'A'에서 가장 가까운 객체 ID부터 순서대로
-            "B": [obj_id3, obj_id4, ...],  # Row 'B'에서 가장 가까운 객체 ID부터 순서대로
-            "C": [obj_id5, obj_id6, ...],  # Row 'C'에서 가장 가까운 객체 ID부터 순서대로
-            "D": [obj_id7, obj_id8, ...],  # Row 'D'에서 가장 가까운 객체 ID부터 순서대로
-        }
-        """
-        return self._row_sorted_objects
-
     # >>> Callbacks for ROS2 Subscriptions >>>
-
-    def _pc_callback(self, msg: PointCloud2):
-        """PointCloud2 메시지를 수신"""
-        self._point_cloud_msg = msg
 
     def _depth_callback(self, msg: Image):
         """Depth 이미지 메시지를 수신"""
         self._depth_image_msg = msg
+        self._update_depth()
 
     def _volume_marker_callback(self, msg: MarkerArray):
         """Grid 마커 메시지를 수신"""
@@ -247,20 +146,6 @@ class ObservationManager:
     # <<< ROS2 Callbacks <<<
 
     # >>> Pose-Processing Methods >>>
-
-    def _update_pointcloud(self):
-        """함수가 호출될 때만, Numpy 배열로 변환하여 self._raw_pointcloud에 저장"""
-        if self._point_cloud_msg is None:
-            self._node.get_logger().warn(
-                "아직 PointCloud2 메시지를 수신하지 못했습니다."
-            )
-            self._raw_pointcloud = None
-            return
-
-        pc = PointCloudTransformer.pointcloud2_to_numpy(
-            msg=self._point_cloud_msg, rgb=False
-        )
-        self._raw_pointcloud = pc
 
     def _update_depth(self):
         """함수가 호출될 때만, Numpy 배열로 변환하여 self._depth_image에 저장"""
@@ -277,6 +162,10 @@ class ObservationManager:
         np_depth = self._depth_image_manager.crop_image(
             img=np_depth
         )  # 크롭 로직 내재화
+
+        zero_pixel = np.zeros((480, 40), dtype=np.uint16)
+        np_depth = np.hstack([np_depth, zero_pixel])[:, 40:]
+
         self._depth_image = np_depth
 
     def _update_grid_volumes(self):
@@ -284,12 +173,6 @@ class ObservationManager:
         MarkerArray 메시지를 기반으로, Grid의 각 Cell에 해당하는 3D 부피 정보를 self._grid_volumes에 저장
         {'A0': {'center': [...], 'scale': [...]}, ...}
         """
-        marker_info = {}
-
-        if self._volume_marker_array_msg is None:
-            self._node.get_logger().warn("아직 Grid 마커 메시지를 수신하지 못했습니다.")
-            self._grid_volumes = marker_info
-            return None
 
         def decode_marker_id(marker_id: str) -> Tuple[str, int]:
             """인코딩된 마커 ID를 ROW, COL로 분리함"""
@@ -306,20 +189,38 @@ class ObservationManager:
                 )
                 return None, None
 
+        gird_size = (
+            (4, 5) if len(self._boundary) == 6 else (3, 4)
+        )  # boundary 길이에 따라 그리드 크기 결정
+        grid_matrix = np.zeros(gird_size)
+
+        """
+        예시 그리드
+        [
+            [0, 0, 0, 0, 0]
+            [0, 0, 0, 0, 0]
+            [0, 0, 0, 0, 0]
+            [0, 0, 0, 0, 0]
+        ] -> (4, 5) 크기의 그리드
+        """
+
+        if self._volume_marker_array_msg is None:
+            self._node.get_logger().warn("아직 Grid 마커 메시지를 수신하지 못했습니다.")
+            self._grid_volumes = grid_matrix
+            return None
+
         for marker in self._volume_marker_array_msg.markers:
             marker: Marker
 
             if marker.ns == "grid_volume":
                 row, col = decode_marker_id(marker.id)
-                position: Point = marker.pose.position
-                scale: Vector3 = marker.scale
+                row_int = ord(row) - ord("A")  # 0~4
+                col_int = int(col)  # 0~5
 
-                marker_info[f"{row}{col}"] = {
-                    "center": [position.x, position.y, position.z],
-                    "scale": [scale.x, scale.y, scale.z],
-                }
+                # (4, 5) 크기의 그리드에서, 해당하는 인덱스 값을 1로 변환
+                grid_matrix[row_int, col_int] = 1
 
-        self._grid_volumes = marker_info
+        self._grid_volumes = grid_matrix
 
     def _update_segmentation(self):
         """
@@ -349,6 +250,9 @@ class ObservationManager:
 
             data = {
                 "id": bbox.id,
+                "cls": str(bbox.cls),
+                "conf": bbox.conf,
+                "bbox": bbox.bbox,
                 "mask": (
                     np.array(bbox.mask_data).reshape((bbox.mask_row, bbox.mask_col))
                     if bbox.mask_row > 0 and bbox.mask_col > 0
@@ -366,28 +270,21 @@ class ObservationManager:
         """closest_object_node.py의 아웃라이어 제거 로직 차용"""
         return depth_array[depth_array < 1240]
 
-    def process_column_objects(self):
+    def _process_column_objects(self):
         """
         Depth 이미지와 객체 검출 결과를 기반으로, 각 컬럼별로 가장 가까운 객체 ID를 추출하여
         self._column_sorted_objects에 저장합니다.
         """
 
-        self._update_depth()  # 최신 Depth 이미지 업데이트
-
-        num_cols = len(self._boundary) + 1
+        num_cols = len(self._boundary) - 1  # 경계선 개수 - 1 = 컬럼 개수
         columns_data = {i: [] for i in range(num_cols)}
 
-        if self._depth_image is None or not self._detected_objects:
-            self._column_sorted_objects = {i: [] for i in range(num_cols)}
-            return
-
         # 원본 코드의 보정 로직 (좌우 패딩/크롭 등 형태를 맞추기 위함)
-        depth_img = self._depth_image
-        if depth_img.shape[1] > 40:
-            zero_pixel = np.zeros((depth_img.shape[0], 40), dtype=depth_img.dtype)
-            depth_img = np.hstack([depth_img, zero_pixel])[:, 40:]
+        depth_img = np.copy(self._depth_image)
 
         for obj in self._detected_objects:
+            obj: Dict[str, np.ndarray]
+
             mask = obj["mask"].astype(bool)
             mask_depth = depth_img[mask]
             mask_depth = mask_depth[mask_depth > 0]
@@ -405,532 +302,348 @@ class ObservationManager:
             center_x = np.mean(mask_x)
 
             # X 픽셀 기준 컬럼 인덱스 찾기
-            col_idx = num_cols - 1
-            for i, b_val in enumerate(self._boundary):
-                if center_x < b_val:
+            # self._boundary = [0, 170, 300, 460, 640] 기준으로 컬럼 경계선이 정의되어 있다고 가정
+            col_idx = None
+            for i in range(len(self._boundary) - 1):
+                if self._boundary[i] <= center_x < self._boundary[i + 1]:
                     col_idx = i
                     break
 
-            columns_data[col_idx].append({"id": obj["id"], "distance": mean_distance})
+            if col_idx is not None:
+                columns_data[col_idx].append(
+                    {
+                        "id": obj["id"],
+                        "distance": mean_distance,
+                    }
+                )
 
-        # 컬럼별로 거리(distance) 기준 오름차순 정렬 후 ID만 추출
-        self._column_sorted_objects.clear()
-        for col_idx, obj_list in columns_data.items():
-            obj_list.sort(key=lambda x: x["distance"])
-            self._column_sorted_objects[col_idx] = [item["id"] for item in obj_list]
+        self._column_sorted_objects = {
+            col_idx: [obj["id"] for obj in sorted(objects, key=lambda x: x["distance"])]
+            for col_idx, objects in columns_data.items()
+        }
 
-    def process_row_objects(self):
-        """
-        Depth 이미지와 객체 검출 결과를 기반으로, 각 '행(Row)'별로 가장 가까운 객체 ID를 추출하여
-        self._row_sorted_objects에 저장합니다. (process_column_objects의 Y축 버전)
-        """
-        self._update_depth()  # 최신 Depth 이미지 업데이트
-
-        # Y축 경계값이 필요하므로, 없으면 기본값 설정 (클래스 __init__에 추가하는 것을 권장)
-        if not hasattr(self, "row_boundary"):
-            # 예: 세로 해상도가 480 픽셀일 때 4등분하는 예시 경계값
-            self.row_boundary = [120, 240, 360]
-
-        num_rows = len(self.row_boundary) + 1
-        rows_data = {i: [] for i in range(num_rows)}
-
-        if self._depth_image is None or not self._detected_objects:
-            self._row_sorted_objects = {i: [] for i in range(num_rows)}
-            return
-
-        # 원본 코드의 보정 로직 (좌우 패딩/크롭 등 형태를 맞추기 위함)
-        depth_img = self._depth_image
-        if depth_img.shape[1] > 40:
-            zero_pixel = np.zeros((depth_img.shape[0], 40), dtype=depth_img.dtype)
-            depth_img = np.hstack([depth_img, zero_pixel])[:, 40:]
-
-        for obj in self._detected_objects:
-            mask: np.ndarray = obj["mask"].astype(bool)
-
-            # 크기 불일치 방어 로직 (Numpy 에러 방지용)
-            if depth_img.shape != mask.shape:
-                continue
-
-            mask_depth = depth_img[mask]
-            mask_depth = mask_depth[mask_depth > 0]
-            mask_depth = self._remove_outliers(mask_depth)
-
-            if len(mask_depth) == 0:
-                continue
-
-            mean_distance = np.mean(mask_depth)
-
-            # Y 픽셀 기준 (mask의 0번째 인덱스가 Y축(행)을 의미함)
-            mask_y = np.where(mask)[0]
-
-            if len(mask_y) == 0:
-                continue
-
-            center_y = np.mean(mask_y)
-
-            # Y 픽셀 기준 로우(Row) 인덱스 찾기
-            row_idx = num_rows - 1
-            for i, b_val in enumerate(self.row_boundary):
-                if center_y < b_val:
-                    row_idx = i
-                    break
-
-            rows_data[row_idx].append({"id": obj["id"], "distance": mean_distance})
-
-        # 로우별로 거리(distance) 기준 오름차순 정렬 후 ID만 추출
-        if not hasattr(self, "row_sorted_objects"):
-            self._row_sorted_objects = {}
-
-        self._row_sorted_objects.clear()
-        for row_idx, obj_list in rows_data.items():
-            obj_list.sort(key=lambda x: x["distance"])
-            self._row_sorted_objects[row_idx] = [item["id"] for item in obj_list]
-
-    def execute_3d_segmentation(self) -> bool:
-        """
-        정렬된 컬럼 정보와 3D Grid 마커(Volume) 정보를 결합하여 PointCloud를 분할합니다.
-        측면(Lateral) 접근 환경의 특성상[cite: 6], 거리가 가까울수록
-        앞쪽 Row(예: 'A', 'B', 'C' 순)에 위치한다는 휴리스틱을 적용합니다.
-        """
-        # 최신 PointCloud 데이터를 Numpy 배열로 업데이트 (호출 시점에 변환 수행)
-        self._update_pointcloud()
-
-        if self._raw_pointcloud is None or not self._grid_volumes:
-            return False
-
-        self._segmented_pointclouds.clear()
-        row_identifiers = [
-            "A",
-            "B",
-            "C",
-            "D",
-        ]  # GridManager의 row_id 정책에 맞게 확장 가능
-
-        # 각 컬럼별로 앞(가장 가까운)에서부터 차례대로 Row ID를 부여하여 3D 부피와 매칭
-        for col_idx, sorted_ids in self._column_sorted_objects.items():
-            for depth_rank, obj_id in enumerate(sorted_ids):
-                if depth_rank >= len(row_identifiers):
-                    break  # 미리 정의된 Row 개수를 초과하면 무시
-
-                # 예: 컬럼 0에서 가장 가까운 객체 -> 'A0', 두 번째 -> 'B0'
-                row_id = row_identifiers[depth_rank]
-                target_marker_id = f"{row_id}{col_idx}"
-
-                if target_marker_id in self._grid_volumes:
-                    vol_info = self._grid_volumes[target_marker_id]
-                    center = vol_info["center"]
-                    scale = vol_info["scale"]
-
-                    x_min, x_max = center[0] - scale[0] / 2, center[0] + scale[0] / 2
-                    y_min, y_max = center[1] - scale[1] / 2, center[1] + scale[1] / 2
-                    z_min, z_max = center[2] - scale[2] / 2, center[2] + scale[2] / 2
-
-                    pts = self._raw_pointcloud
-                    mask = (
-                        (pts[:, 0] >= x_min)
-                        & (pts[:, 0] <= x_max)
-                        & (pts[:, 1] >= y_min)
-                        & (pts[:, 1] <= y_max)
-                        & (pts[:, 2] >= z_min)
-                        & (pts[:, 2] <= z_max)
-                    )
-
-                    self._segmented_pointclouds[obj_id] = pts[mask]
-
-        return len(self._segmented_pointclouds) > 0
-
-    def reconstruct_full_pointcloud(
-        self, target_id: str, select_id: str = None, present_objects: List[str] = None
-    ) -> Optional[np.ndarray]:
-        """
-        분할된 PointCloud 조각들을 모두 합쳐서 원본과 동일한 형태로 재구성합니다.
-        present_objects가 주어지면, 해당 리스트에 있는 객체들만 조립하여 '가상의 상태'를 만듭니다.
-        """
-        if not self._segmented_pointclouds:
+    def get_observation(self, target_object_id: int) -> np.ndarray:
+        if self._grid_volumes is None or len(self._column_sorted_objects) == 0:
+            self._node.get_logger().warn(
+                "관측값을 구성하는 데 필요한 데이터가 아직 준비되지 않았습니다."
+            )
             return None
 
-        # MCTS 탐색 중이 아니라, 최초 1회 실행(초기 상태 세팅)일 때만 업데이트 수행
-        if present_objects is None:
-            self.process_column_objects()
-            self.execute_3d_segmentation()
-            present_objects = [str(k) for k in self._segmented_pointclouds.keys()]
+        # 1. 원본 배열과 동일한 크기의 0(비어있음)으로 채워진 결과 배열 생성
+        obs = np.zeros_like(self._grid_volumes, dtype=np.int32)
+        _, cols = self._grid_volumes.shape
 
-        all_points = []
-        for obj_id, points in self._segmented_pointclouds.items():
-            # ★ 핵심: MCTS 트리 상에서 이미 치워진 물체라면 합치지 않고 패스!
-            if str(obj_id) not in present_objects:
+        for c in range(cols):
+            # 해당 컬럼에서 물체가 차 있는(1인) 행의 인덱스를 가져옴
+            # 행 인덱스는 0(가장 앞쪽)부터 시작하여 오름차순으로 정렬되어 있음
+            occupied_rows = np.where(self._grid_volumes[:, c] == 1)[0]
+            num_occupied = len(occupied_rows)
+
+            if num_occupied == 0:
                 continue
 
-            if points is None or len(points) == 0:
-                continue
+            # 해당 컬럼에 등록된 물체 리스트 가져오기
+            col_objs = self._column_sorted_objects.get(c, [])
+            num_objs = len(col_objs)
 
-            if str(obj_id) == str(target_id):
-                id_feature = 1
-            elif str(obj_id) == str(select_id):
-                id_feature = 0
+            if num_occupied == num_objs:
+                # [케이스 1] 갯수가 일치할 경우: 순서대로 단순 매핑
+                for r, obj_id in zip(occupied_rows, col_objs):
+                    obs[r, c] = 2 if obj_id == target_object_id else 1
             else:
-                id_feature = -1
+                # [케이스 2] 갯수가 다를 경우: 뒤에서부터 매핑하고 나머지는 -1 처리
+                rev_occupied = occupied_rows[::-1]
+                rev_objs = col_objs[::-1]
 
-            id_column = np.full((points.shape[0], 1), id_feature)
-            points_with_id = np.hstack([points, id_column])
-            all_points.append(points_with_id)
+                target_in_col = target_object_id in col_objs
+                target_assigned = False
 
-        return np.vstack(all_points) if all_points else None
+                for i, r in enumerate(rev_occupied):
+                    if i < num_objs:
+                        # 뒤에서부터 물체 아이디를 매핑
+                        obj_id = rev_objs[i]
+                        if obj_id == target_object_id:
+                            obs[r, c] = 2
+                            target_assigned = True
+                        else:
+                            obs[r, c] = 1
+                    else:
+                        # 매핑할 물체가 부족하면 나머지는 알 수 없음(-1) 처리
+                        obs[r, c] = -1
+
+                # (2는 우선순위를 가짐) 조건 반영:
+                # 센서/비전의 불일치로 타겟이 누락될 위기라도, 해당 컬럼에 타겟이 존재한다고
+                # 인식되었다면 가장 앞쪽의 남아있는 칸을 2로 강제 덮어씌워 타겟 위치를 잃지 않도록 보장.
+                if target_in_col and not target_assigned:
+                    front_most_row = rev_occupied[-1]  # 남은 공간 중 가장 앞쪽(입구)
+                    obs[front_most_row, c] = 2
+
+        """
+        0: 비어있음, 1: 일반 물체, 2: 타겟(목표), -1: 알 수 없음
+        np.array(
+            [
+                [1, 1, 1, -1, 1],  # 가장 앞쪽 (입구)
+                [1, 1, -1, 1, 1],
+                [1, 1, -1, 1, 1], 
+                [1, 2, 1, 1, 1],  # 가장 깊숙한 곳
+            ]
+        )
+        """
+
+        return obs
+
+
+# ==========================================
+# 1. MCTS 코어 인터페이스 및 엔진 (수정 최소화)
+# ==========================================
+class GameState(ABC):
+    @abstractmethod
+    def get_possible_actions(self) -> List[Any]:
+        pass
+
+    @abstractmethod
+    def take_action(self, action: Any) -> "GameState":
+        pass
+
+    @abstractmethod
+    def is_terminal(self) -> bool:
+        pass
+
+    @abstractmethod
+    def get_reward(self) -> float:
+        pass
 
 
 class MCTSNode:
-    """
-    GP3 MCTS 트리의 각 상태(State)를 나타내는 노드 클래스입니다[cite: 179].
-    """
-
-    def __init__(self, state_objects: List[str], parent=None, action_taken: str = None):
-        self._state_objects = state_objects  # 현재 상태에 남아있는 객체 ID 리스트
-        self._parent: "MCTSNode" = parent  # 부모 노드
-        self._action_taken: str = (
-            action_taken  # 부모 노드에서 이 노드로 오기 위해 치운 객체 ID
-        )
-
-        self._children: Dict[str, "MCTSNode"] = (
-            {}
-        )  # Action(치운 객체 ID)을 Key로 가지는 자식 노드들
-        self._untried_actions: List[str] = (
-            []
-        )  # 아직 탐색하지 않은 유효한 행동(객체 ID) 리스트
-
-        self._visits: int = 0  # N(X): 노드 방문 횟수 [cite: 194]
-        self._value: float = 0.0  # F(X): 노드 가치 [cite: 194]
-        self._action_values: Dict[str, float] = (
-            {}
-        )  # G(X, a): 노드-행동 가치 [cite: 194]
-
-        self._is_terminal: bool = False
-        self._is_success: bool = False
-
-    # >>> Getter / Setter >>>
-    @property
-    def state_objects(self) -> List[str]:
-        return self._state_objects
+    def __init__(self, state: GameState, parent=None, action=None):
+        self.state = state
+        self.parent = parent
+        self.action = action
+        self.children = {}
+        self.visits = 0
+        self.value = 0.0
 
     @property
-    def parent(self) -> "MCTSNode":
-        return self._parent
-
-    @property
-    def action_taken(self) -> str:
-        return self._action_taken
-
-    @property
-    def children(self) -> Dict[str, "MCTSNode"]:
-        return self._children
-
-    @property
-    def untried_actions(self) -> List[str]:
-        return self._untried_actions
-
-    @untried_actions.setter
-    def untried_actions(self, actions: List[str]):
-        self._untried_actions = actions
-
-    @property
-    def visits(self) -> int:
-        return self._visits
-
-    @property
-    def value(self) -> float:
-        return self._value
-
-    @value.setter
-    def value(self, val: float):
-        self._value = val
-
-    @property
-    def action_values(self) -> Dict[str, float]:
-        return self._action_values
-
-    @property
-    def is_terminal(self) -> bool:
-        return self._is_terminal
-
-    @is_terminal.setter
-    def is_terminal(self, val: bool):
-        self._is_terminal = val
-
-    @property
-    def is_success(self) -> bool:
-        return self._is_success
-
-    @is_success.setter
-    def is_success(self, val: bool):
-        self._is_success = val
-
-    # <<< Getter / Setter <<<
-
-    def add_child(self, action: str, child_node: "MCTSNode"):
-        self._children[action] = child_node
-        self._action_values[action] = 0.0
-
-    def increment_visits(self):
-        self._visits += 1
-
     def is_fully_expanded(self) -> bool:
-        return len(self._untried_actions) == 0
+        return len(self.children) == len(self.state.get_possible_actions())
+
+    def best_child(self, c_param: float = 1.414) -> "MCTSNode":
+        best_score = -float("inf")
+        best_node = None
+        for child in self.children.values():
+            if child.visits == 0:
+                score = float("inf")
+            else:
+                exploitation = child.value / child.visits
+                exploration = c_param * math.sqrt(math.log(self.visits) / child.visits)
+                score = exploitation + exploration
+
+            if score > best_score:
+                best_score = score
+                best_node = child
+        return best_node
 
 
-class MCTSManager:
-    """
-    [개선 포인트 2]
-    Node 계층과의 강한 결합을 끊고, 순수 관측 처리 및 알고리즘 수행을 담당합니다.
-    """
+class MCTS:
+    def __init__(self, time_limit: float = 1.0, exploration_constant: float = 20.0):
+        # 리워드 스케일이 100단위이므로 exploration_constant(C) 값도 키워줍니다.
+        self.time_limit = time_limit
+        self.exploration_constant = exploration_constant
 
-    def __init__(self, node: Node):
-        self._node: Node = node
+    def search(self, initial_state: GameState) -> Any:
+        root = MCTSNode(state=initial_state)
+        start_time = time.time()
 
-        self._target_id: str = None  # MCTS 탐색 시 최종 타겟 객체 ID
+        while time.time() - start_time < self.time_limit:
+            node = self._select_and_expand(root)
+            reward = self._simulate(node.state)
+            self._backpropagate(node, reward)
 
-        # GP3 하이퍼파라미터
-        self._exploration_constant: float = 1.414  # c 값 [cite: 201]
-        self._max_iterations: int = 100  # MCTS 최대 반복 횟수
-        self._max_depth: int = 10  # 최대 탐색 깊이 (안전장치)
+        # 탐색 종료 후 가장 많이 방문하고 가치가 높은 노드 선택
+        return root.best_child(c_param=0.0).action
 
-        self.observer = ObservationManager(node=self._node)
-        self.prehensile_net = PrehensileDecisionNetwork()
-        self.priority_net = PriorityDecisionNetwork()
+    def _select_and_expand(self, node: MCTSNode) -> MCTSNode:
+        while not node.state.is_terminal():
+            if not node.is_fully_expanded:
+                return self._expand(node)
+            else:
+                node = node.best_child(self.exploration_constant)
+        return node
 
-    # >>> Getter / Setter >>>
-    @property
-    def target_id(self) -> str:
-        return self._target_id
+    def _expand(self, node: MCTSNode) -> MCTSNode:
+        actions = node.state.get_possible_actions()
+        for action in actions:
+            if action not in node.children:
+                new_state = node.state.take_action(action)
+                new_node = MCTSNode(state=new_state, parent=node, action=action)
+                node.children[action] = new_node
+                return new_node
+        raise Exception("확장 불가 상태")
 
-    @target_id.setter
-    def target_id(self, val: str):
-        self._target_id = val
+    def _simulate(self, state: GameState) -> float:
+        current_state = state
+        # 무작위 Rollout 수행
+        while not current_state.is_terminal():
+            possible_actions = current_state.get_possible_actions()
+            action = random.choice(possible_actions)
+            current_state = current_state.take_action(action)
+        return current_state.get_reward()
 
-    # <<< Getter / Setter <<<
+    def _backpropagate(self, node: MCTSNode, reward: float):
+        while node is not None:
+            node.visits += 1
+            node.value += reward
+            node = node.parent
 
-    def _build_hypothetical_pc(
-        self, present_objects: List[str], target: str, select: str = None
-    ) -> bool:
-        """
-        MCTS 탐색 전 관측 데이터를 기반으로 현재 상태를 세팅합니다.
 
-        """
-        observation = self.observer.reconstruct_full_pointcloud(
-            target_id=target, select_id=select, present_objects=present_objects
-        )
-        return observation
+class GridState(GameState):
+    def __init__(self, grid: np.ndarray, steps: int = 0):
+        self.grid = np.copy(grid)  # 상태 변화를 위해 깊은 복사
+        self.steps = steps
+        self.rows, self.cols = self.grid.shape
 
-    def run_mcts(self) -> List[str]:
-        """
-        MCTS 알고리즘을 실행하여 최적의 객체 제거 순서(Action Sequence)를 반환합니다.
-        """
-        # 1. 초기 상태 세팅
-        self.observer.process_column_objects()
-        self.observer.execute_3d_segmentation()
+    def get_possible_actions(self) -> List[Any]:
+        actions = []
+        # 제약 조건: "앞(Row 0 방향)에 물체가 없어야 뺄 수 있다"
+        # 각 열(col)별로 0(빈칸)이 아닌 가장 처음 만나는 요소만 추출 가능
+        for c in range(self.cols):
+            for r in range(self.rows):
+                if self.grid[r, c] != 0:
+                    actions.append((r, c))  # (행, 열) 좌표를 액션으로 사용
+                    break
+        return actions
 
-        initial_objects = [str(k) for k in self.observer._segmented_pointclouds.keys()]
-        if self._target_id not in initial_objects:
-            self._node.get_logger().error("Target object가 시야에 없습니다.")
-            return []
+    def take_action(self, action: tuple) -> "GameState":
+        r, c = action
+        new_grid = np.copy(self.grid)
+        # 물체를 뽑았으므로 해당 자리는 0(빈칸)이 됨
+        new_grid[r, c] = 0
 
-        root_node = MCTSNode(state_objects=initial_objects)
-        self._init_node_actions(root_node)
+        # 스텝을 1 증가시킨 새로운 상태 반환 (패널티 누적 역할)
+        return GridState(new_grid, self.steps + 1)
 
-        # 2. 4단계 사이클 반복 [cite: 89]
-        for _ in range(self._max_iterations):
-            # Step 1: Selection
-            node = self._selection(root_node)
+    def is_terminal(self) -> bool:
+        # 타겟(2)이 그리드 상에 더 이상 없으면 목표 달성으로 종료
+        if not np.any(self.grid == 2):
+            return True
+        # 뽑을 수 있는 물체가 없는데 타겟도 못 뽑았다면 갇힌 상태로 종료
+        if len(self.get_possible_actions()) == 0:
+            return True
+        return False
 
-            # Step 2: Expansion
-            if not node.is_terminal and not node.is_fully_expanded():
-                node = self._expansion(node)
-
-            # Step 3: Simulation
-            reward = self._simulation(node)
-
-            # Step 4: Backpropagation
-            self._backpropagation(node, reward)
-
-        # 3. 최적의 경로 추출 (가장 방문 횟수가 많은 자식 선택)
-        return self._extract_best_sequence(root_node)
-
-    def _init_node_actions(self, node: MCTSNode):
-        """노드에서 수행 가능한 행동(치울 수 있는 객체)들을 Priority Network로 필터링하여 초기화합니다."""
-        # 1. 터미널 조건 검사: 타겟이 지금 바로 잡히는가? (Success) [cite: 181]
-        pc_target = self._build_hypothetical_pc(
-            node.state_objects, target=self._target_id
-        )
-        if pc_target is not None and self.prehensile_net.is_prehensile(pc_target):
-            node.is_terminal = True
-            node.is_success = True
-            node.value = 1.0
-            return
-
-        # 2. 유효한 행동(치울 객체) 추출
-        valid_actions = []
-        for obj_id in node.state_objects:
-            if obj_id == self._target_id:
-                continue
-
-            # 우선순위 네트워크를 통해 Pruning (가치가 delta 이하인 객체는 가지치기) [cite: 204-207]
-            pc_priority = self._build_hypothetical_pc(
-                node.state_objects, target=self._target_id, select=obj_id
-            )
-            if pc_priority is not None and not self.priority_net.should_prune(
-                pc_priority
-            ):
-                valid_actions.append(obj_id)
-
-        if not valid_actions:
-            node.is_terminal = True  # 뺄 수 있는게 없으면 실패(Dead-end)
-            node.is_success = False
-            node.value = 0.0
-
-        node.untried_actions = valid_actions
-
-    def _selection(self, node: MCTSNode) -> MCTSNode:
-        """UCT 공식을 사용하여 자식 노드를 선택합니다 [cite: 200-203]."""
-        current = node
-        while not current.is_terminal and current.is_fully_expanded():
-            best_action = None
-            best_uct = -float("inf")
-
-            for action, child in current.children.items():
-                if child.visits == 0:
-                    uct = float("inf")
-                else:
-                    # UCT 공식: G(X, a) + c * sqrt(2 * ln(N(X)) / N(child))
-                    g_val = current.action_values[action]
-                    exploration = self._exploration_constant * math.sqrt(
-                        2 * math.log(current.visits) / child.visits
-                    )
-                    uct = g_val + exploration
-
-                if uct > best_uct:
-                    best_uct = uct
-                    best_action = action
-
-            current = current.children[best_action]
-        return current
-
-    def _expansion(self, node: MCTSNode) -> MCTSNode:
-        """아직 시도하지 않은 행동 중 하나를 골라 자식 노드를 생성합니다 [cite: 208-209]."""
-        action = node.untried_actions.pop(0)  # 단순 순차 추출. 휴리스틱으로 정렬 가능
-
-        # 행동 적용: 선택된 객체 제거 [cite: 193]
-        new_state_objects = copy.deepcopy(node.state_objects)
-        new_state_objects.remove(action)
-
-        child_node = MCTSNode(
-            state_objects=new_state_objects, parent=node, action_taken=action
-        )
-
-        # 자식 노드가 유효한지(치우려는 객체를 현재 잡을 수 있는지) 판별 [cite: 182]
-        pc_action_obj = self._build_hypothetical_pc(node.state_objects, target=action)
-        if pc_action_obj is None or not self.prehensile_net.is_prehensile(
-            pc_action_obj
-        ):
-            child_node.is_terminal = True
-            child_node.is_success = False
-            child_node.value = 0.0
+    def get_reward(self) -> float:
+        if not np.any(self.grid == 2):
+            # 성공 리워드: 100점 - (물체를 뽑기 위해 소모한 스텝 수)
+            # 최단 시간(최소 횟수)으로 뽑을수록 높은 리워드를 받음
+            return 100.0 - self.steps
         else:
-            self._init_node_actions(child_node)
+            # 실패 리워드: 강한 패널티
+            return -100.0
 
-        node.add_child(action, child_node)
-        return child_node
+    def print_grid(self):
+        """
+        현재 상태를 보기 좋게 출력하는 헬퍼 함수
+        0: 빈칸, 1: 일반 물체, 2: 타겟(목표), -1: 알 수 없음
+        """
+        symbols = {0: " 🔲 ", 1: " 📦 ", 2: " 🎯 ", -1: " ❓ "}
+        for r in range(self.rows - 1, -1, -1):
+            row_str = "".join([symbols[val] for val in self.grid[r]])
+            print(f"Row {r} | {row_str}")
+        print()
 
-    def _simulation(self, node: MCTSNode) -> float:
-        """Priority Network를 이용한 탐욕(Greedy) 롤아웃을 수행합니다 [cite: 210-215]."""
-        current_objects = copy.deepcopy(node.state_objects)
-        depth = 0
 
-        # 이미 터미널 노드라면 즉시 반환
-        if node.is_terminal:
-            return node.value
+class MCTSNode(Node):
+    def __init__(self):
+        super().__init__("mcts_node")
 
-        while depth < self._max_depth:
-            # 타겟이 잡히는지 확인
-            pc_target = self._build_hypothetical_pc(
-                current_objects, target=self._target_id
-            )
-            if pc_target is not None and self.prehensile_net.is_prehensile(pc_target):
-                return 1.0  # 성공
+        self._observation_manager = ObservationManager(self)
+        self._grid_state = GridState(grid=None, steps=0)
+        self._mcts_engine = MCTS(time_limit=5.0, exploration_constant=20.0)
 
-            best_action = None
-            best_val = -float("inf")
+        # self._result_publisher = self.create_publisher(
+        #     Int32MultiArray,
+        #     self.get_name() + "/closest_object_ids",
+        #     qos_profile_system_default,
+        # )
 
-            # Priority Network로 최적의 다음 객체 탐색
-            for obj_id in current_objects:
-                if obj_id == self._target_id:
-                    continue
-                pc_priority = self._build_hypothetical_pc(
-                    current_objects, target=self._target_id, select=obj_id
-                )
-                if pc_priority is None:
-                    continue
+        # 비동기 서비스 처리를 위한 콜백 그룹
+        self.srv_cb_group = ReentrantCallbackGroup()
+        self.timer_cb_group = MutuallyExclusiveCallbackGroup()
 
-                val = self.priority_net.predict(pc_priority)
-                if val > best_val:
-                    best_val = val
-                    best_action = obj_id
+        self._closest_object_sub = self.create_subscription(
+            Int32MultiArray,
+            "closest_object_classifier" + "/closest_object_ids",
+            callback=self._closest_object_callback,
+            qos_profile=qos_profile_system_default,
+            callback_group=self.srv_cb_group,
+        )
 
-            if best_action is None:
-                return 0.0  # 더 이상 치울 수 없음 (실패)
+        self.srv = self.create_service(
+            GetFCNResult,
+            "get_fcn_prediction",
+            self.handle_mcts_request,
+            callback_group=self.srv_cb_group,
+        )
 
-            # 치울 객체가 Prehensile 한지 검증
-            pc_action_obj = self._build_hypothetical_pc(
-                current_objects, target=best_action
-            )
-            if pc_action_obj is None or not self.prehensile_net.is_prehensile(
-                pc_action_obj
-            ):
-                return 0.0  # 치우려는 물체를 잡을 수 없음 (실패)
+        self._closest_object_list: List[int] = (
+            []
+        )  # 가장 가까운 객체 ID 리스트 (컬럼 순서대로)
 
-            # 객체 제거 후 다음 깊이로 이동
-            current_objects.remove(best_action)
-            depth += 1
+    def _closest_object_callback(self, msg: Int32MultiArray):
+        """가장 가까운 객체 ID 리스트를 수신하여 업데이트"""
+        self._closest_object_list = msg.data
 
-        return 0.0  # 최대 깊이 초과 (실패)
+    def handle_mcts_request(
+        self, request: GetFCNResult.Request, response: GetFCNResult.Response
+    ):
+        # 1. 요청 파라미터에서 타겟 클래스 인덱스 추출
+        target_id: int = request.target_class_idx
 
-    def _backpropagation(self, node: MCTSNode, reward: float):
-        """시뮬레이션 결과를 바탕으로 부모 노드들의 가치를 업데이트합니다 [cite: 216-217]."""
-        current = node
-        current_reward = reward
+        # 2. 관측값 업데이트 및 가공
+        new_grid: np.ndarray = self._observation_manager.get_observation(
+            target_object_id=target_id
+        )
 
-        while current is not None:
-            current.increment_visits()
+        # 3. State 재초기화
+        grid_state = GridState(grid=new_grid, steps=0)
 
-            if current.parent is not None:
-                action = current.action_taken
-                # G(X, a) 업데이트: max(-0.1 + F(X_child), 0) [cite: 196]
-                current.parent.action_values[action] = max(-0.1 + current_reward, 0.0)
+        # 4. MCTS 탐색 수행
+        first_action: int = None
+        while rclpy.ok() and not grid_state.is_terminal():
+            best_action = self._mcts_engine.search(grid_state)
+            if first_action is None:
+                _, c = best_action
+                first_action = c  # 첫 번째 액션의 컬럼 인덱스 저장
 
-                # F(X) 업데이트: max(G(X, a)) [cite: 196]
-                current.parent.value = (
-                    max(current.parent.action_values.values())
-                    if current.parent.action_values
-                    else 0.0
-                )
+            grid_state = grid_state.take_action(best_action)
 
-            # 논문에서는 성공 시 1.0에서 스텝마다 0.1씩 감소시킨 값을 뒤로 전파합니다[cite: 214].
-            if current_reward > 0.0:
-                current_reward = max(current_reward - 0.1, 0.0)
+        # 여러번 실행을 했고, 첫 번째 액션이 존재한다면 탐색이 정상적으로 이루어졌다고 판단
+        trigger = grid_state.steps != 0 and first_action is not None
+        random_action = random.choice(
+            [i for i, obj_id in enumerate(self._closest_object_list) if obj_id != -1]
+        )
 
-            current = current.parent
+        response.data = first_action if trigger else random_action
 
-    def _extract_best_sequence(self, root: MCTSNode) -> List[str]:
-        """탐색 완료 후 가장 최적의 시퀀스(방문 횟수가 가장 많은 자식들의 경로)를 추출합니다."""
-        sequence = []
-        current = root
-        while current.children:
-            # 방문 횟수가 가장 많은 자식 선택 (Robust Child)
-            best_action = max(
-                current.children.keys(), key=lambda a: current.children[a].visits
-            )
-            sequence.append(best_action)
-            current = current.children[best_action]
+        return response
 
-            # 만약 타겟을 집을 수 있는 노드에 도달했다면 종료
-            if current.is_success:
-                break
 
-        return sequence
+def main(args=None):
+    rclpy.init(args=args)
+    node = MCTSNode()
+
+    # 비동기 서비스 처리(추론)와 타이머(시각화)가 동시에 돌아가기 위해 멀티스레드 사용
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
+
+    try:
+        executor.spin()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
