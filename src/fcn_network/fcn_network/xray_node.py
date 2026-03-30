@@ -49,7 +49,6 @@ class PolicyServiceNode(Node):
         self.get_logger().info("🟢 Node A (Policy Server) 준비 완료. 요청 대기 중...")
 
         self.get_logger().info("RL Policy Manager 초기화 완료.")
-        
 
     async def handle_get_policy_action(
         self, request: GetPolicyAction.Request, response: GetPolicyAction.Response
@@ -77,8 +76,13 @@ class PolicyServiceNode(Node):
         fcn_data = fcn_res.data
 
         # 4. 결과 반환 (Main으로)
-        response.action_type = 0 # 0 is Grasp (Fixed)
-        response.target_column = int(np.argmax(fcn_data))  # FCN 결과에서 가장 높은 값의 인덱스를 열로 사용
+        response.action_type = 0  # 0 is Grasp (Fixed)
+        response.target_column = int(
+            np.argmax(fcn_data)
+        )  # FCN 결과에서 가장 높은 값의 인덱스를 열로 사용
+        response.one_d_pdm = fcn_res.data
+        response.one_d_image = fcn_res.one_d_image
+        response.two_d_image = fcn_res.two_d_image
 
         self.get_logger().info(
             f"✅ [A] 추론 완료! 반환 값: Action={response.action_type}, Column={response.target_column}"

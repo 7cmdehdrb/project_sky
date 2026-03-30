@@ -5,3 +5,5 @@ int32 target_class_idx
 ---
 
 float32[] data
+sensor_msgs/Image one_d_image
+sensor_msgs/Image two_d_image

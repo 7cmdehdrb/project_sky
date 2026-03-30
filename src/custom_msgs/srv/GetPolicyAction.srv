@@ -1,4 +1,9 @@
 int32 target_id
+
 ---
+
 int32 action_type
 int32 target_column
+float32[] one_d_pdm
+sensor_msgs/Image one_d_image
+sensor_msgs/Image two_d_image

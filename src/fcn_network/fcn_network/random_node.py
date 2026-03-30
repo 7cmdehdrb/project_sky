@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import List, Union
 
 from std_msgs.msg import *
+from sensor_msgs.msg import Image
 from custom_msgs.srv import GetPolicyAction, GetFCNResult
 from fcn_network.drl_manager import RLPolicyManager, PolicyAction
 
@@ -39,13 +40,12 @@ class PolicyServiceNode(Node):
             callback_group=self.cb_group,
         )
 
-        self._cnt_pub = self.create_publisher(
-            Int32,
-            "/fcn_service_node/cnt",
-            qos_profile=qos_profile_system_default,
-        )
-        self._cnt = 0
-
+        # self._cnt_pub = self.create_publisher(
+        #     Int32,
+        #     "/fcn_service_node/cnt",
+        #     qos_profile=qos_profile_system_default,
+        # )
+        # self._cnt = 0
 
         # 3. Main 노드를 위한n 서비스 서버 오픈
         self.srv = self.create_service(
@@ -58,14 +58,15 @@ class PolicyServiceNode(Node):
         self.get_logger().info("🟢 Node A (Policy Server) 준비 완료. 요청 대기 중...")
         self.get_logger().info("RL Policy Manager 초기화 완료.")
 
-        self._timer = self.create_timer(0.1, self._publish_cnt, callback_group=self.cb_group)
+    #     self._timer = self.create_timer(
+    #         0.1, self._publish_cnt, callback_group=self.cb_group
+    #     )
 
-
-    def _publish_cnt(self):
-        """현재 카운트 값을 주기적으로 퍼블리시하는 헬퍼 함수 (디버깅용)"""
-        cnt_msg = Int32()
-        cnt_msg.data = self._cnt
-        self._cnt_pub.publish(cnt_msg)
+    # def _publish_cnt(self):
+    #     """현재 카운트 값을 주기적으로 퍼블리시하는 헬퍼 함수 (디버깅용)"""
+    #     cnt_msg = Int32()
+    #     cnt_msg.data = self._cnt
+    #     self._cnt_pub.publish(cnt_msg)
 
     def object_id_callback(self, msg: Int32MultiArray):
         self._closet_object_list = [int(x) for x in msg.data]
@@ -74,7 +75,7 @@ class PolicyServiceNode(Node):
         self, request: GetPolicyAction.Request, response: GetPolicyAction.Response
     ):
 
-        self._cnt += 1
+        # self._cnt += 1
 
         target_id = request.target_id
         self.get_logger().info(
@@ -88,23 +89,32 @@ class PolicyServiceNode(Node):
 
         if target_id in list(self._closet_object_list):
             response.action_type = 0  # Grasp
-            response.target_column = int(np.where(np.array(self._closet_object_list) == target_id)[0][0])
+            response.target_column = int(
+                np.where(np.array(self._closet_object_list) == target_id)[0][0]
+            )
 
             self.get_logger().info(
                 f"✅ [A] 추론 완료! 반환 값: Action={response.action_type}, Column={response.target_column}"
             )
 
-            return response
-        
         else:
             # 4. 결과 반환 (Main으로)
-            response.action_type = 0 # 0 is Grasp (Fixed)
-            response.target_column = int(np.random.choice([i for i, v in enumerate(self._closet_object_list) if v != -1]))
+            response.action_type = 0  # 0 is Grasp (Fixed)
+            response.target_column = int(
+                np.random.choice(
+                    [i for i, v in enumerate(self._closet_object_list) if v != -1]
+                )
+            )
 
             self.get_logger().info(
                 f"✅ [A] 랜덤 탐색!: Action={response.action_type}, Column={response.target_column}"
             )
-            return response
+
+        response.one_d_pdm = []
+        response.one_d_image = Image()
+        response.two_d_image = Image()
+
+        return response
 
 
 def main(args=None):

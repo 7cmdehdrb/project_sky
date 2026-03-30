@@ -7,6 +7,7 @@ import numpy as np
 import cv2
 import rclpy
 from enum import Enum
+import copy
 from rclpy.node import Node
 from rclpy.time import Time
 from rclpy.duration import Duration
@@ -65,10 +66,7 @@ class ImageLogger:
         self._raw_image: Image = None
         self._closest_image: Image = None
         self._segmentation_image: Image = None
-        self._1d_fcn_processed_image: Image = None
-        self._2d_fcn_processed_image: Image = None
         self._top_view_image: Image = None
-        self._1d_pdm_value: Float32MultiArray = None
 
         self._image_manager = ImageManager(
             node=self._node,
@@ -86,41 +84,45 @@ class ImageLogger:
                     "callback": self._callback_segmentation_image,
                 },
                 {
-                    "topic_name": "/fcn_service_node/pdm_visualization",
-                    "callback": self._callback_1d_fcn_processed_image,
-                },
-                {
-                    "topic_name": "/fcn_service_node/target_map_visualization",
-                    "callback": self._callback_2d_fcn_processed_image,
-                },
-                {
                     "topic_name": "/action_cam_node/top_view_image",
                     "callback": self._callback_top_view_image,
                 },
+                # {
+                #     "topic_name": "/fcn_service_node/pdm_visualization",
+                #     "callback": self._callback_1d_fcn_processed_image,
+                # },
+                # {
+                #     "topic_name": "/fcn_service_node/target_map_visualization",
+                #     "callback": self._callback_2d_fcn_processed_image,
+                # },
             ],
             published_topics=[],
         )
-        self._1d_pdm_sub = self._node.create_subscription(
-            Float32MultiArray,
-            "/fcn_service_node/one_d_pdm",
-            qos_profile=qos_profile_system_default,
-            callback=self._callback_1d_pdm,
-        )
+
+        # self._1d_pdm_sub = self._node.create_subscription(
+        #     Float32MultiArray,
+        #     "/fcn_service_node/one_d_pdm",
+        #     qos_profile=qos_profile_system_default,
+        #     callback=self._callback_1d_pdm,
+        # )
         # <<< ROS Subscriber & Publisher 초기화 <<<
 
         # >>> Tlqkf >>>
-        self._cnt_sub = self._node.create_subscription(
-            Int32,
-            "/fcn_service_node/cnt",
-            qos_profile=qos_profile_system_default,
-            callback=self._callback_cnt,
-        )
+        # self._cnt_sub = self._node.create_subscription(
+        #     Int32,
+        #     "/fcn_service_node/cnt",
+        #     qos_profile=qos_profile_system_default,
+        #     callback=self._callback_cnt,
+        # )
 
         # 외부에서 값을 부여할 것
         self.step = 0
         self.target_id = 0
         self.action = 0
         self.target_column = 0
+        self.one_d_fcn_processed_image: Image = None
+        self.two_d_fcn_processed_image: Image = None
+        self.one_d_pdm_value: Float32MultiArray = None
 
         # 디버깅용 카운트 및 트리거 플래그
         self._cnt = 0
@@ -130,37 +132,37 @@ class ImageLogger:
 
         # HZ: 2
 
-    def _reset(self):
-        self._raw_image = None
-        self._closest_image = None
-        self._segmentation_image = None
-        self._1d_fcn_processed_image = None
-        self._2d_fcn_processed_image = None
-        self._top_view_image = None
-        self._1d_pdm_value = None
+    # def _reset(self):
+    #     self._raw_image = None
+    #     self._closest_image = None
+    #     self._segmentation_image = None
+    #     self._1d_fcn_processed_image = None
+    #     self._2d_fcn_processed_image = None
+    #     self._top_view_image = None
+    #     self._1d_pdm_value = None
 
-    def run(self):
-        # timer 를 써서 주기적으로 회전 시킬 함수
-        # self._trigger가 True + trigger time 과 3초 이상 차이날 때 로그를 기록하고 _trigger는 False로 바꿔주는 함수
-        # print(self._trigger)
-        # print(self._trigger_time, (time.time() - self._trigger_time) if self._trigger_time else None)
-        
-        if self._trigger_time is None:
-            return
-        
-        if self._trigger and (time.time() - self._trigger_time) > 2.0:
-            self.log()
-            self._trigger = False
-            self._trigger_time = None
+    # def run(self):
+    #     # timer 를 써서 주기적으로 회전 시킬 함수
+    #     # self._trigger가 True + trigger time 과 3초 이상 차이날 때 로그를 기록하고 _trigger는 False로 바꿔주는 함수
+    #     # print(self._trigger)
+    #     # print(self._trigger_time, (time.time() - self._trigger_time) if self._trigger_time else None)
 
-    def _callback_cnt(self, msg: Int32):
-        data = msg.data
-        if data != self._cnt:
-            # self._node.get_logger().info(f"카운트 변경 감지: {self._cnt} -> {data}")
-            # 카운트가 변경될 때마다 로그에 기록
-            self._cnt = data
-            self._trigger = True
-            self._trigger_time = time.time()
+    #     if self._trigger_time is None:
+    #         return
+
+    #     if self._trigger and (time.time() - self._trigger_time) > 2.0:
+    #         self.log()
+    #         self._trigger = False
+    #         self._trigger_time = None
+
+    # def _callback_cnt(self, msg: Int32):
+    #     data = msg.data
+    #     if data != self._cnt:
+    #         # self._node.get_logger().info(f"카운트 변경 감지: {self._cnt} -> {data}")
+    #         # 카운트가 변경될 때마다 로그에 기록
+    #         self._cnt = data
+    #         self._trigger = True
+    #         self._trigger_time = time.time()
 
     def _callback_raw_image(self, msg: Image):
         self._raw_image = msg
@@ -171,17 +173,17 @@ class ImageLogger:
     def _callback_segmentation_image(self, msg: Image):
         self._segmentation_image = msg
 
-    def _callback_1d_fcn_processed_image(self, msg: Image):
-        self._1d_fcn_processed_image = msg
-
-    def _callback_2d_fcn_processed_image(self, msg: Image):
-        self._2d_fcn_processed_image = msg
-
     def _callback_top_view_image(self, msg: Image):
         self._top_view_image = msg
 
-    def _callback_1d_pdm(self, msg: Float32MultiArray):
-        self._1d_pdm_value = msg
+    # def _callback_1d_fcn_processed_image(self, msg: Image):
+    #     self._1d_fcn_processed_image = msg
+
+    # def _callback_2d_fcn_processed_image(self, msg: Image):
+    #     self._2d_fcn_processed_image = msg
+
+    # def _callback_1d_pdm(self, msg: Float32MultiArray):
+    #     self._1d_pdm_value = msg
 
     def _post_process_images(self, msg: Image, ignore_none: bool = False) -> np.ndarray:
 
@@ -200,34 +202,45 @@ class ImageLogger:
         return np_image
 
     def log(self):
+        # Images from Subscribers
         raw_image = self._post_process_images(self._raw_image)
         closest_image = self._post_process_images(self._closest_image)
         segmentation_image = self._post_process_images(self._segmentation_image)
-        fcn_1d_image = self._post_process_images(self._1d_fcn_processed_image, ignore_none=True)
-        fcn_2d_image = self._post_process_images(self._2d_fcn_processed_image, ignore_none=True)
         top_view_image = self._post_process_images(
             self._top_view_image, ignore_none=True
         )
 
-        if self._1d_pdm_value is not None:
-            processed_1d_pdm = f"{'; '.join(f'{v:.2f}' for v in self._1d_pdm_value.data)}"
-        else:
-            processed_1d_pdm = "None"
+        # Images from FCN Service (복사본 생성)
+        fcn_1d_image = (
+            copy.copy(self.one_d_fcn_processed_image)
+            if self.one_d_fcn_processed_image is not None
+            else None
+        )
+        fcn_2d_image = (
+            copy.copy(self.two_d_fcn_processed_image)
+            if self.two_d_fcn_processed_image is not None
+            else None
+        )
+        processed_1d_pdm = (
+            "None"
+            if self.one_d_pdm_value is None
+            else f"{'; '.join(f'{v:.2f}' for v in self.one_d_pdm_value.data)}"
+        )
 
-        if (
-            any(
-                img is None
-                for img in [
-                    raw_image,
-                    closest_image,
-                    segmentation_image,
-                    fcn_1d_image,
-                    fcn_2d_image,
-                ]
-            )
-            or processed_1d_pdm is None
+        if any(
+            img is None
+            for img in [
+                raw_image,
+                closest_image,
+                segmentation_image,
+                fcn_1d_image,
+                fcn_2d_image,
+                processed_1d_pdm,
+            ]
         ):
-            print("하나 이상의 이미지 또는 1D PDM 값이 아직 수신되지 않았습니다. 로그 기록을 건너뜁니다.")
+            self._node.get_logger().error(
+                "하나 이상의 이미지 또는 1D PDM 값이 아직 수신되지 않았습니다. 로그 기록을 건너뜁니다."
+            )
             return None
 
         images_to_save = [
@@ -245,8 +258,6 @@ class ImageLogger:
         logger.info(
             f"{self.step},{self.target_id},{self.action},{self.target_column},{processed_1d_pdm}"
         )
-
-        self._reset()
 
 
 class MockMainNode(Node):
@@ -285,11 +296,11 @@ class MockMainNode(Node):
 
         self.request_count = 0
 
-        self._timer = self.create_timer(0.5, self._image_logger.run)
+        # self._timer = self.create_timer(0.5, self._image_logger.run)
 
     def send_request(self):
         self.request_count += 1
-        self._image_logger._reset()
+        # self._image_logger._reset()
 
         req = GetPolicyAction.Request()
         req.target_id = self._target_id
@@ -309,6 +320,9 @@ class MockMainNode(Node):
 
             action = result.action_type
             col = result.target_column
+            one_d_pdm_msg = Float32MultiArray(data=result.one_d_pdm)
+            one_d_image: Image = result.one_d_image
+            two_d_image: Image = result.two_d_image
 
             action_str = self._action_descriptions.get(action, f"알 수 없음 ({action})")
 
@@ -331,6 +345,11 @@ class MockMainNode(Node):
             self._image_logger.target_id = self._target_id
             self._image_logger.action = action
             self._image_logger.target_column = col
+            self._image_logger.one_d_pdm_value = one_d_pdm_msg
+            self._image_logger.one_d_fcn_processed_image = one_d_image
+            self._image_logger.two_d_fcn_processed_image = two_d_image
+
+            self._image_logger.log()
 
         except Exception as e:
             self.get_logger().error(f"❌ [Main] {req_num}번째 호출 실패: {e}")

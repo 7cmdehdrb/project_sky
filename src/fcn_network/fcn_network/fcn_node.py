@@ -109,14 +109,15 @@ class FCNServiceNode(Node):
                 },
             ],
         )
-        self._1d_pdm_publisher = self.create_publisher(
-            Float32MultiArray,
-            self.get_name() + "/one_d_pdm",
-            qos_profile=qos_profile_system_default,
-        )
-        self._cnt_publisher = self.create_publisher(
-            Int32, self.get_name() + "/cnt", qos_profile=qos_profile_system_default
-        )
+
+        # self._1d_pdm_publisher = self.create_publisher(
+        #     Float32MultiArray,
+        #     self.get_name() + "/one_d_pdm",
+        #     qos_profile=qos_profile_system_default,
+        # )
+        # self._cnt_publisher = self.create_publisher(
+        #     Int32, self.get_name() + "/cnt", qos_profile=qos_profile_system_default
+        # )
 
         # --- 3. 서비스 서버 오픈 (요청 대기) ---
         self.srv = self.create_service(
@@ -127,27 +128,46 @@ class FCNServiceNode(Node):
         )
 
         # --- 4. 시각화 퍼블리싱 타이머 (1Hz) ---
-        self._cnt = 0
+        HZ = 10.0
+        self._one_d_image: Image = None
+        self._two_d_image: Image = None
         self.timer = self.create_timer(
-            0.5, self.publish_visualization, callback_group=self.timer_cb_group
+            1.0 / HZ, self._publish_image, callback_group=self.timer_cb_group
         )
-        self.timer2 = self.create_timer(
-            0.5, self.publish_1d_pdm, callback_group=self.timer_cb_group
-        )
-        self.timer3 = self.create_timer(
-            5.0, self.publish_cnt, callback_group=self.timer_cb_group
-        )
+
+        # self._cnt = 0
+        # self.timer2 = self.create_timer(
+        #     1.0 / HZ, self.publish_1d_pdm, callback_group=self.timer_cb_group
+        # )
+        # self.timer3 = self.create_timer(
+        #     1.0 / HZ, self.publish_cnt, callback_group=self.timer_cb_group
+        # )
 
         self.get_logger().info(
             "🟢 노드 B (FCN Service) 준비 완료. 이미지 수신 및 요청 대기 중..."
         )
 
-        self.get_logger().info("FCN Manager 초기화 완료.")
-        self.get_logger().info(f"모델 경로: {model_path}")
+        self.get_logger().info("🟢 FCN Manager 초기화 완료.")
         self.get_logger().info(
-            f"Gain: {fcn_gain}, Gamma: {fcn_gamma}, Image Transform: {fcn_image_transform}"
+            f"Model Path: {model_path}\n"
+            f"Gain: {fcn_gain}\n"
+            f"Gamma: {fcn_gamma}\n"
+            f"Image Transform: {fcn_image_transform}"
+            f"Peak Boundaries: {peak_boundaries}"
         )
-        self.get_logger().info(f"Peak Boundaries: {peak_boundaries}")
+
+    def _publish_image(self):
+        """타이머 콜백: 시각화된 이미지가 있으면 주기적으로 발행"""
+        if self._latest_1d_pdm is not None:
+            self._image_manager.get_publisher(
+                self.get_name() + "/pdm_visualization"
+            ).publish(self._one_d_image)
+
+        if self._target_map is not None:
+            self._image_manager.get_publisher(
+                self.get_name() + "/target_map_visualization"
+            ).publish(self._two_d_image)
+            self.publish_target_map_visualization()
 
     def image_callback(self, msg: Image):
         """카메라로부터 이미지를 상시 수신하여 최신 상태로 유지합니다."""
@@ -201,32 +221,23 @@ class FCNServiceNode(Node):
 
         # 4. 길이 N(4)의 float 배열 응답 생성
         # NumPy 배열을 Python 리스트(float)로 변환하여 할당
+
+        self._one_d_image: Image = (
+            self.publish_pdm_visualization()
+        )  # 시각화 퍼블리싱 (옵션)
+        self._two_d_image: Image = (
+            self.publish_target_map_visualization()
+        )  # 시각화 퍼블리싱 (옵션)
+
         response.data = weighted_peak_data.tolist()
 
-        self._cnt += 1  # 디버깅용 카운트 증가
+        response.one_d_image = self._one_d_image
+        response.two_d_image = self._two_d_image
 
         self.get_logger().info(f"[B] 추론 완료. 결과: {response.data}")
         return response
 
-    def publish_1d_pdm(self):
-        """1초 주기로 1D PDM 데이터를 Float32MultiArray로 발행"""
-        if self._latest_1d_pdm is None:
-            return
-
-        # NumPy 배열을 Float32MultiArray 메시지로 변환
-        pdm_msg = Float32MultiArray()
-        pdm_msg.data = self._latest_weighted_peak_data.astype(np.float32).tolist()
-
-        # 토픽 발행
-        self._1d_pdm_publisher.publish(pdm_msg)
-
-    def publish_cnt(self):
-        """1초 주기로 카운트 발행 (디버깅용)"""
-        cnt_msg = Int32()
-        cnt_msg.data = self._cnt
-        self._cnt_publisher.publish(cnt_msg)
-
-    def publish_visualization(self):
+    def publish_pdm_visualization(self):
         """1초 주기로 1D PDM 그래프를 렌더링하여 ROS Image로 발행"""
         if self._latest_1d_pdm is None:
             return
@@ -236,6 +247,7 @@ class FCNServiceNode(Node):
         """
         fig, ax = plt.subplots(figsize=(6, 4))
         ax.plot(self._latest_1d_pdm, color="blue")
+        ax.grid(True)
         ax.set_title("1D PDM Profile")
         ax.set_xlim(0, len(self._latest_1d_pdm))
 
@@ -255,9 +267,12 @@ class FCNServiceNode(Node):
 
         # ROS 메세지 변환 및 발행
         img_msg = self.bridge.cv2_to_imgmsg(vis_image_bgr, encoding="bgr8")
-        self._image_manager.get_publisher(
-            self.get_name() + "/pdm_visualization"
-        ).publish(img_msg)
+        img_msg.header.stamp = self.get_clock().now().to_msg()
+        img_msg.header.frame_id = "camera1_color_optical_frame"
+
+        return img_msg
+
+    def publish_target_map_visualization(self):
 
         ######################################################
 
@@ -278,12 +293,27 @@ class FCNServiceNode(Node):
 
         # (선택) 헤더에 타임스탬프 추가가 필요하다면 아래 주석 해제
         img_msg.header.stamp = self.get_clock().now().to_msg()
-        # img_msg.header.frame_id = "camera1_color_optical_frame"
+        img_msg.header.frame_id = "camera1_color_optical_frame"
 
-        # 3. 토픽 발행
-        self._image_manager.get_publisher(
-            self.get_name() + "/target_map_visualization"
-        ).publish(img_msg)
+        return img_msg
+
+    # def publish_1d_pdm(self):
+    #     """1초 주기로 1D PDM 데이터를 Float32MultiArray로 발행"""
+    #     if self._latest_1d_pdm is None:
+    #         return
+
+    #     # NumPy 배열을 Float32MultiArray 메시지로 변환
+    #     pdm_msg = Float32MultiArray()
+    #     pdm_msg.data = self._latest_weighted_peak_data.astype(np.float32).tolist()
+
+    #     # 토픽 발행
+    #     self._1d_pdm_publisher.publish(pdm_msg)
+
+    # def publish_cnt(self):
+    #     """1초 주기로 카운트 발행 (디버깅용)"""
+    #     cnt_msg = Int32()
+    #     cnt_msg.data = self._cnt
+    #     self._cnt_publisher.publish(cnt_msg)
 
 
 def main(args=None):

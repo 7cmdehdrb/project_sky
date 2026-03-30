@@ -97,7 +97,7 @@ class PolicyServiceNode(Node):
         future = self.fcn_client.call_async(fcn_req)
 
         try:
-            fcn_res = await future  # B 노드 응답 대기 (비동기)
+            fcn_res: GetFCNResult.Response = await future  # B 노드 응답 대기 (비동기)
         except Exception as e:
             self.get_logger().error(f"Node B 호출 실패: {e}")
             return response
@@ -106,10 +106,18 @@ class PolicyServiceNode(Node):
         self.policy_manager.column_distribution = fcn_res.data
         self.policy_manager.target_id = target_id
 
-        self.get_logger().info(f"Observation - column_distribution: {self.policy_manager.column_distribution}")
-        self.get_logger().info(f"Observation - target_id: {self.policy_manager.target_id}")
-        self.get_logger().info(f"Observation - front_object_distance: {self.policy_manager.front_object_distance}")
-        self.get_logger().info(f"Observation - front_object: {self.policy_manager.front_object}")
+        self.get_logger().info(
+            f"Observation - column_distribution: {self.policy_manager.column_distribution}"
+        )
+        self.get_logger().info(
+            f"Observation - target_id: {self.policy_manager.target_id}"
+        )
+        self.get_logger().info(
+            f"Observation - front_object_distance: {self.policy_manager.front_object_distance}"
+        )
+        self.get_logger().info(
+            f"Observation - front_object: {self.policy_manager.front_object}"
+        )
 
         # 3. 모델 1회 추론 및 내부 상태(t-1) 자동 갱신
         self.get_logger().info(f"   -> RL Policy 추론 진행...")
@@ -118,6 +126,9 @@ class PolicyServiceNode(Node):
         # 4. 결과 반환 (Main으로)
         response.action_type = policy_action.action_type
         response.target_column = policy_action.target_column
+        response.one_d_pdm = fcn_res.data
+        response.one_d_image = fcn_res.one_d_image
+        response.two_d_image = fcn_res.two_d_image
 
         self.get_logger().info(
             f"✅ [A] 추론 완료! 반환 값: Action={response.action_type}, Column={response.target_column}"
