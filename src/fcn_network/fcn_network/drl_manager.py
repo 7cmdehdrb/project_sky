@@ -124,7 +124,7 @@ class RLPolicyManager:
         raw_column = action_output[0, 1]
 
         clipped_policy = int(np.clip(raw_policy, 0, 2))
-        clipped_column = int(np.clip(raw_column, 0, 3))
+        clipped_column = int(np.clip(raw_column, 0, 4))
 
         # (5) ★ 핵심: 다음 스텝(t+1)의 입력으로 사용하기 위해 내부 상태를 자동 갱신 ★
         self._action_policy = float(clipped_policy)

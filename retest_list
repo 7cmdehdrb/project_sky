@@ -1,0 +1,18 @@
+retest list
+
+learing_rate_1_gain_test
+	exp_45_scenario6_gain_2     clear
+	exp_45_scenario29_gain_3    clear
+
+learning_rate_0.7_gain_test
+	exp_45_scenario6_gain_1     clear
+	exp_45_scenario6_gain_3     clear
+	exp_45_scenario29_gain_1    clear
+	exp_45_scenario29_gain_2    clear
+	
+gain_2_learning_rate_test
+	exp_45_scenario9custom_learning_rate_0.7    clear
+	exp_45_scenario9custom_learning_rate_1.0    clear
+	exp_custom1_learning_rate_0.3               clear
+	exp_custom1_learning_rate_0.5               clear
+	

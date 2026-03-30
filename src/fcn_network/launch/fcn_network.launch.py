@@ -12,7 +12,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "model_path": f"{root_dir}/src/fcn_network/resource/250506_ver1/exported/policy.onnx",
+                "model_path": f"{root_dir}/src/fcn_network/resource/250506_ver2/exported/policy.onnx",
             }
         ],
     )
@@ -39,14 +39,23 @@ def generate_launch_description():
         parameters=[
             {
                 "fcn_gain": 2.0,
-                "fcn_gamma": 1.0,
-                "model_path": f"{root_dir}/src/fcn_network/resource/best_model_45.pth",
+                "fcn_gamma": 0.7,
+                # "model_path": f"{root_dir}/src/fcn_network/resource/best_model_45.pth",
+                # "model_path": f"{root_dir}/src/fcn_network/resource/best_model_45_b.pth",
+                "model_path": f"{root_dir}/src/fcn_network/resource/best_model_45_og.pth",
                 "fcn_image_transform": True,
                 "peak_boundaries": [0, 170, 270, 384, 480, 640],
                 # "peak_boundaries": [0, 170, 300, 460, 640],
             }
         ],
     )
+
+    # ratio,O0,S10.pth
+    # ratio,O2,S8.pth
+    # ratio,O5,S5.pth
+    # ratio,O7,S3.pth
+    # ratio,O10,S0.pth
+
 
     grid_node = Node(
         package="fcn_network",
@@ -63,9 +72,9 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
-            drl_node,
+            # drl_node,
             drop_grid_node,
-            fcn_server,
+            # fcn_server,
             grid_node,
         ]
     )

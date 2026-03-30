@@ -25,7 +25,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "model_file": f"{root_dir}/src/object_tracker/resource/best_yolo45_new.pt", # best_hg.pt
+                "model_file": f"{root_dir}/src/object_tracker/resource/best_v11.pt", # best_hg.pt
                 "obj_bounds_file": f"{root_dir}/src/object_tracker/resource/obj_bounds.json",
                 "conf_threshold": 0.7,
             }

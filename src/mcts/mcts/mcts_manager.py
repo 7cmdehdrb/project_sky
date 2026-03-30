@@ -77,6 +77,7 @@ class ObservationManager:
             qos_profile=qos_profile_system_default,
         )
 
+
         # >>>>> ROS2 Messages <<<<<
 
         self._depth_image_msg: Optional[Image] = None
@@ -572,6 +573,13 @@ class MCTSROSNode(Node):
         #     qos_profile_system_default,
         # )
 
+        self._cnt_pub = self.create_publisher(
+            Int32,
+            "/fcn_service_node/cnt",
+            qos_profile=qos_profile_system_default,
+        )
+        self._cnt = 0
+
         # 비동기 서비스 처리를 위한 콜백 그룹
         self.srv_cb_group = ReentrantCallbackGroup()
         self.timer_cb_group = MutuallyExclusiveCallbackGroup()
@@ -595,14 +603,24 @@ class MCTSROSNode(Node):
             []
         )  # 가장 가까운 객체 ID 리스트 (컬럼 순서대로)
 
+        self._timer = self.create_timer(1.0, self._publish_cnt, callback_group=self.timer_cb_group)
+
     def _closest_object_callback(self, msg: Int32MultiArray):
         """가장 가까운 객체 ID 리스트를 수신하여 업데이트"""
         self._closest_object_list = msg.data
+
+    def _publish_cnt(self):
+        """현재 카운트 값을 주기적으로 퍼블리시하는 헬퍼 함수 (디버깅용)"""
+        cnt_msg = Int32()
+        cnt_msg.data = self._cnt
+        self._cnt_pub.publish(cnt_msg)
 
     def handle_mcts_request(
         self, request: GetPolicyAction.Request, response: GetPolicyAction.Response
     ):
         # 1. 요청 파라미터에서 타겟 클래스 인덱스 추출
+
+        self._cnt += 1
         
         target_id: int = request.target_id
 

@@ -23,33 +23,12 @@ class PolicyServiceNode(Node):
             parameters=[
                 (
                     "model_path",
-                    "/home/min/7cmdehdrb/project_sky/src/fcn_network/resource/exported_45/policy.onnx",
+                    "/home/irol/DRL-Occluded-Object-Search/src/fcn_network/resource/best_model_45_og.pth",
                 ),
             ],
         )
 
         self.cb_group = ReentrantCallbackGroup()
-
-        # 모델 경로 수정 필요
-        model_path = self.get_parameter("model_path").get_parameter_value().string_value
-        self.policy_manager = RLPolicyManager(model_path)
-
-        # 1. 구독 (Observations)
-        self.dist_sub = self.create_subscription(
-            Float32MultiArray,
-            "/front_object_distance",  # 미정 토픽명
-            self.distance_callback,
-            qos_profile=qos_profile_system_default,
-            callback_group=self.cb_group,
-        )
-
-        self.obj_sub = self.create_subscription(
-            Int32MultiArray,
-            "/closest_object_classifier/closest_object_ids",
-            self.object_id_callback,
-            qos_profile=qos_profile_system_default,
-            callback_group=self.cb_group,
-        )
 
         # 2. Node B 클라이언트 설정 및 확인
         self.fcn_client = self.create_client(
@@ -70,15 +49,7 @@ class PolicyServiceNode(Node):
         self.get_logger().info("🟢 Node A (Policy Server) 준비 완료. 요청 대기 중...")
 
         self.get_logger().info("RL Policy Manager 초기화 완료.")
-        self.get_logger().info(f"모델 경로: {model_path}")
-
-    def distance_callback(self, msg: Float32MultiArray):
-        # Float Array -> Policy Manager 저장
-        self.policy_manager.front_object_distance = msg.data
-
-    def object_id_callback(self, msg: Int32MultiArray):
-        # Int Array -> Float 캐스팅 후 Policy Manager 저장
-        self.policy_manager.front_object = [float(x) for x in msg.data]
+        
 
     async def handle_get_policy_action(
         self, request: GetPolicyAction.Request, response: GetPolicyAction.Response
@@ -97,27 +68,17 @@ class PolicyServiceNode(Node):
         future = self.fcn_client.call_async(fcn_req)
 
         try:
-            fcn_res = await future  # B 노드 응답 대기 (비동기)
+            fcn_res: GetFCNResult.Response = await future  # B 노드 응답 대기 (비동기)
         except Exception as e:
             self.get_logger().error(f"Node B 호출 실패: {e}")
             return response
 
-        # 2. B의 응답 및 Main의 요청 데이터를 Policy Manager에 주입
-        self.policy_manager.column_distribution = fcn_res.data
-        self.policy_manager.target_id = target_id
-
-        self.get_logger().info(f"Observation - column_distribution: {self.policy_manager.column_distribution}")
-        self.get_logger().info(f"Observation - target_id: {self.policy_manager.target_id}")
-        self.get_logger().info(f"Observation - front_object_distance: {self.policy_manager.front_object_distance}")
-        self.get_logger().info(f"Observation - front_object: {self.policy_manager.front_object}")
-
-        # 3. 모델 1회 추론 및 내부 상태(t-1) 자동 갱신
-        self.get_logger().info(f"   -> RL Policy 추론 진행...")
-        policy_action = self.policy_manager.request_action()
+        # float32[] data
+        fcn_data = fcn_res.data
 
         # 4. 결과 반환 (Main으로)
-        response.action_type = policy_action.action_type
-        response.target_column = policy_action.target_column
+        response.action_type = 0 # 0 is Grasp (Fixed)
+        response.target_column = int(np.argmax(fcn_data))  # FCN 결과에서 가장 높은 값의 인덱스를 열로 사용
 
         self.get_logger().info(
             f"✅ [A] 추론 완료! 반환 값: Action={response.action_type}, Column={response.target_column}"

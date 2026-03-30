@@ -148,7 +148,7 @@ class ImageLogger:
         if self._trigger_time is None:
             return
         
-        if self._trigger and (time.time() - self._trigger_time) > 3.0:
+        if self._trigger and (time.time() - self._trigger_time) > 2.0:
             self.log()
             self._trigger = False
             self._trigger_time = None
@@ -156,7 +156,7 @@ class ImageLogger:
     def _callback_cnt(self, msg: Int32):
         data = msg.data
         if data != self._cnt:
-            self._node.get_logger().info(f"카운트 변경 감지: {self._cnt} -> {data}")
+            # self._node.get_logger().info(f"카운트 변경 감지: {self._cnt} -> {data}")
             # 카운트가 변경될 때마다 로그에 기록
             self._cnt = data
             self._trigger = True
@@ -203,12 +203,16 @@ class ImageLogger:
         raw_image = self._post_process_images(self._raw_image)
         closest_image = self._post_process_images(self._closest_image)
         segmentation_image = self._post_process_images(self._segmentation_image)
-        fcn_1d_image = self._post_process_images(self._1d_fcn_processed_image)
-        fcn_2d_image = self._post_process_images(self._2d_fcn_processed_image)
+        fcn_1d_image = self._post_process_images(self._1d_fcn_processed_image, ignore_none=True)
+        fcn_2d_image = self._post_process_images(self._2d_fcn_processed_image, ignore_none=True)
         top_view_image = self._post_process_images(
             self._top_view_image, ignore_none=True
         )
-        processed_1d_pdm = f"{'; '.join(f'{v:.2f}' for v in self._1d_pdm_value.data)}"
+
+        if self._1d_pdm_value is not None:
+            processed_1d_pdm = f"{'; '.join(f'{v:.2f}' for v in self._1d_pdm_value.data)}"
+        else:
+            processed_1d_pdm = "None"
 
         if (
             any(
@@ -221,8 +225,9 @@ class ImageLogger:
                     fcn_2d_image,
                 ]
             )
-            or self._1d_pdm_value is None
+            or processed_1d_pdm is None
         ):
+            print("하나 이상의 이미지 또는 1D PDM 값이 아직 수신되지 않았습니다. 로그 기록을 건너뜁니다.")
             return None
 
         images_to_save = [
@@ -280,7 +285,7 @@ class MockMainNode(Node):
 
         self.request_count = 0
 
-        # self._timer = self.create_timer(0.5, self._image_logger.run)
+        self._timer = self.create_timer(0.5, self._image_logger.run)
 
     def send_request(self):
         self.request_count += 1
@@ -300,7 +305,7 @@ class MockMainNode(Node):
 
     def response_callback(self, future: rclpy.Future, req_num: int):
         try:
-            result = future.result()
+            result: GetPolicyAction.Response = future.result()
 
             action = result.action_type
             col = result.target_column
@@ -332,7 +337,7 @@ class MockMainNode(Node):
 
 
 def main(args=None):
-    TARGET_ID = 12
+    TARGET_ID = 4
     NUM_COLUMNS = 5
 
     rclpy.init(args=args)
