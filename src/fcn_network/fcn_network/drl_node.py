@@ -25,12 +25,17 @@ class PolicyServiceNode(Node):
                     "model_path",
                     "/home/min/7cmdehdrb/project_sky/src/fcn_network/resource/exported_45/policy.onnx",
                 ),
+                (
+                    "weight_fcn",
+                    [1.0, 1.0, 1.0, 1.0, 1.0],
+                )
             ],
         )
 
         self.cb_group = ReentrantCallbackGroup()
 
         # 모델 경로 수정 필요
+        self._weight_fcn = list(self.get_parameter("weight_fcn").get_parameter_value().double_array_value)
         model_path = self.get_parameter("model_path").get_parameter_value().string_value
         self.policy_manager = RLPolicyManager(model_path)
 
@@ -90,7 +95,7 @@ class PolicyServiceNode(Node):
 
         # 1. Node B(FCN)에 결과 요청
         fcn_req = GetFCNResult.Request()
-        fcn_req.weight = [1.0, 1.0, 1.0, 1.0, 1.0]  # 기본 가중치
+        fcn_req.weight = self._weight_fcn
         fcn_req.target_class_idx = target_id
 
         self.get_logger().info(f"   -> Node B에 FCN 결과 요청 중...")

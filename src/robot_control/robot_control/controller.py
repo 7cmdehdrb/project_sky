@@ -133,7 +133,7 @@ class UR5eController:
             0.01  # IK 솔버의 허용 오차 (예시값, 필요에 따라 조정)
         )
         self._fraction_threshold: float = (
-            0.7  # Cartesian Path 계획 시 허용할 최소 경로 완성도 (예시값, 필요에 따라 조정)
+            0.9  # Cartesian Path 계획 시 허용할 최소 경로 완성도 (예시값, 필요에 따라 조정)
         )
         self._default_frame_id: str = (
             "world"  # UR5e의 기본 프레임 ID (MoveIt2 설정에 따라 다를 수 있음)
@@ -158,12 +158,12 @@ class UR5eController:
                 "shoulder_pan_joint",
             ],
             position=[
-                -0.853251652126648,
-                -2.4234585762023926,
-                -3.0269695721068324,
-                -np.pi / 2.0,
-                np.pi,
-                -1.616389576588766,
+                -0.7853637498668213,
+                -2.356220006942749,
+                3.1415864664265136,
+                -1.5707829634295862,
+                3.1416053771972656,
+                -3.1415467897998255,
             ],
         )
         self._safety_joints = JointState(
@@ -180,12 +180,12 @@ class UR5eController:
                 "shoulder_pan_joint",
             ],
             position=[
-                -0.7980526937250012,
-                -2.2779344915978577,
-                -3.22939911761183,
-                -0.6398843295933805,
-                3.150328623414728,
-                -0.6956096575289052,
+                -1.047192172413208,
+                -2.0944418907165527,
+                3.141551657313965,
+                -1.5707863012896937,
+                3.1415441036224365,
+                -3.141532007847921,
             ],
         )
         self._waiting_joints = JointState(
@@ -202,12 +202,12 @@ class UR5eController:
                 "shoulder_pan_joint",
             ],
             position=[
-                -0.14543800000017093,
-                -0.5723896666667043,
-                -2.2659790000078974,
-                -1.76121310109918,
-                3.1378451010107,
-                0.04616566666664836,
+                -0.2618168157390137,
+                -0.785332977771759,
+                3.1415559488483886,
+                -1.5707948843585413,
+                3.141516923904419,
+                -1.5708096663104456,
             ],
         )
         # <<<<< End of Predefined Joint States <<<<<
@@ -277,6 +277,16 @@ class UR5eController:
         # FK 서비스를 이용하여 safety_joints에 대한 TCP Pose 계산
         return self._fk_manager.run(
             joint_states=self._safety_joints,
+            end_effector=self._end_effector_link,
+        )
+    
+    @property
+    def second_safety_pose(self) -> PoseStamped | None:
+        second_safety_joint = copy.deepcopy(self._safety_joints)
+        second_safety_joint.position[-1] += np.deg2rad(90.0)  # shoulder_pan_joint를 yaw 방향으로 90도 회전
+        
+        return self._fk_manager.run(
+            joint_states=second_safety_joint,
             end_effector=self._end_effector_link,
         )
 

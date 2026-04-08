@@ -73,18 +73,18 @@ class ObjectManager:
         # "스마트 딕셔너리" 인스턴스화
         self.names = SmartNameDict(
             {
-                "can_1": "coca_cola",
-                "can_2": "cyder",
-                "can_3": "yello_peach",
-                "cup_1": "cup_sky",
-                "cup_2": "cup_white",
-                "cup_3": "cup_blue",
-                "mug_1": "mug_black",
-                "mug_2": "mug_gray",
-                "mug_3": "mug_yello",
-                "bottle_1": "alive",
-                "bottle_2": "green_tea",
-                "bottle_3": "yello_smoothie",
+                "can_1": "coca_cola", # 0 
+                "can_2": "cyder", # 1
+                "can_3": "yello_peach", # 2
+                "cup_1": "cup_sky", # 3
+                "cup_2": "cup_white", # 4
+                "cup_3": "cup_blue", # 5
+                "mug_1": "mug_black", # 6
+                "mug_2": "mug_gray", # 7
+                "mug_3": "mug_yello", # 8
+                "bottle_1": "alive", # 9
+                "bottle_2": "green_tea", # 10
+                "bottle_3": "yello_smoothie", # 11
             }
         )
 

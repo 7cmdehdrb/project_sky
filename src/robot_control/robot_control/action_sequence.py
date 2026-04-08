@@ -266,8 +266,9 @@ class GraspActionSequence(ActionSequence):
             orientation=self._ur_controller.home_orientation,
         )
 
-        self._ur_controller.plan_and_execute_kinematic_path(
-            waypoints=[safety_pose, first_aim_pose, second_aim_pose, target_pose]
+        self._ur_controller.plan_and_execute_cartesian_path(
+            waypoints=[safety_pose, first_aim_pose, second_aim_pose, target_pose],
+            max_retries=20,
         )
 
     def _grasp(self):
@@ -282,14 +283,20 @@ class GraspActionSequence(ActionSequence):
             ),
             orientation=self._ur_controller.home_orientation,
         )
+        second_aim_pose.position.z += 0.05  # 높이도 약간 올려서 중간 세이프티 자세로 이동
 
         # target_point에서, 떨어진 앞 위치 (UR 정면의 역방향)
         first_aim_pose = Pose(
             position=self._direction.move_point(
-                point=self._target_point, distance=0.05, reverse=True
+                point=self._target_point, distance=0.1, reverse=True
             ),
             orientation=self._ur_controller.home_orientation,
         )
+        first_aim_pose.position.z += 0.05  # 높이도 약간 올려서 중간 세이프티 자세로 이동
+
+        safety_pose: Pose = self._ur_controller.safety_pose.pose
+
+        second_safety_pose: Pose = self._ur_controller.second_safety_pose.pose
 
         # Position은 drop_point, Orientation은 홈 자세 +90도
         drop_pose = Pose(
@@ -306,10 +313,14 @@ class GraspActionSequence(ActionSequence):
             waypoints=[
                 second_aim_pose,
                 first_aim_pose,
+                safety_pose,
+                second_safety_pose,
                 first_drop_pose,
                 drop_pose,
-            ]
+            ],
+            max_retries=20,
         )
+
 
     def _release(self):
         self._gripper_controller.control_gripper(open=True, max_effort=0.0)
@@ -434,12 +445,13 @@ class SweepActionSequence(ActionSequence):
             orientation=self._ur_controller.sweep_orientation,
         )
 
-        self._ur_controller.plan_and_execute_kinematic_path(
+        self._ur_controller.plan_and_execute_cartesian_path(
             waypoints=[safety_pose, aim_pose, target_pose],
             max_retries=20,
         )
 
     def _sweep(self):
+        # return
         target_pose = Pose(
             position=self._sweep_direction.move_point(
                 point=self._target_point,
@@ -474,6 +486,11 @@ class SweepActionSequence(ActionSequence):
         waiting_pose: Pose = self._ur_controller.waiting_pose.pose
 
         self._ur_controller.plan_and_execute_kinematic_path(
-            waypoints=[aim_pose, safety_pose, waiting_pose],
+            # waypoints=[aim_pose, safety_pose, waiting_pose],
+            waypoints=[aim_pose, safety_pose],
             max_retries=20,
         )
+
+        self._ur_controller.moveJ(joint_states=self._ur_controller.waiting_joints)
+
+

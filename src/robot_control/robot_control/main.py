@@ -134,7 +134,7 @@ class TargetObjectPicker:
         for marker in self._msg.markers:
             marker: Marker
 
-            if marker.ns == "grid_cells":  # "grid_volume":
+            if marker.ns == "grid_volume":  # "grid_volume":
                 row, col = self._decode_marker_id(marker.id)
                 if col == column_id:
                     object_in_column[row] = marker
@@ -147,7 +147,7 @@ class TargetObjectPicker:
         for marker in self._msg.markers:
             marker: Marker
 
-            if marker.ns == "grid_cells":  # "grid_volume":
+            if marker.ns == "grid_volume":  # "grid_volume":
                 row, col = self._decode_marker_id(marker.id)
 
                 if row == row_id:
@@ -232,15 +232,15 @@ class MainControlNode(Node):
             ur_controller=self._ur5e_controller,
             gripper_controller=self._robotiq_controller,
             target_point=None,  # 실제 타겟 포인트는 DRL 모듈에서 받아와야 하므로 초기값은 None
-            direction=AxisDirection.POS_Y,
+            direction=AxisDirection.POS_X,
         )
         self._sweep_right_action_sequence = SweepActionSequence(
             node=self,
             ur_controller=self._ur5e_controller,
             gripper_controller=self._robotiq_controller,
             target_point=None,  # 실제 타겟 포인트는 DRL 모듈에서 받아와야 하므로 초기값은 None
-            direction=AxisDirection.POS_Y,
-            sweep_direction=AxisDirection.POS_X,  # 오른쪽으로 스윕
+            direction=AxisDirection.POS_X,
+            sweep_direction=AxisDirection.NEG_Y,  # 오른쪽으로 스윕
             sweep_distance=0.1,  # 스윕 거리 (예시값, 실제로는 DRL 모듈에서 받아와야 할 수도 있음)
             offset_distance=0.05,  # 타겟 포인트에서 스윕 시작 지점까지의 오프셋 거리 (예시값, 실제로는 DRL 모듈에서 받아와야 할 수도 있음)
         )
@@ -249,8 +249,8 @@ class MainControlNode(Node):
             ur_controller=self._ur5e_controller,
             gripper_controller=self._robotiq_controller,
             target_point=None,  # 실제 타겟 포인트는 DRL 모듈에서 받아와야 하므로 초기값은 None
-            direction=AxisDirection.POS_Y,
-            sweep_direction=AxisDirection.NEG_X,  # 왼쪽으로 스윕
+            direction=AxisDirection.POS_X,
+            sweep_direction=AxisDirection.POS_Y,  # 왼쪽으로 스윕
             sweep_distance=0.1,  # 스윕 거리 (예시값, 실제로는 DRL 모듈에서 받아와야 할 수도 있음)
             offset_distance=0.05,  # 타겟 포인트에서 스윕 시작 지점까지의 오프셋 거리 (예시값, 실제로는 DRL 모듈에서 받아와야 할 수도 있음)
         )
@@ -263,7 +263,7 @@ class MainControlNode(Node):
 
         self._transform_manager = TransformManager(node=self)
 
-        self._drl_client = DRLClient(node=self, target_class_idx=0)
+        self._drl_client = DRLClient(node=self, target_class_idx=4)
         self._drop_client = DropGridSyncClient(node=self)
         self._target_picker = TargetObjectPicker(
             node=self, transform_manager=self._transform_manager
@@ -297,9 +297,9 @@ class MainControlNode(Node):
         self._action_type: int = res.action_type
         self._target_column: int = res.target_column
 
-        # FOR TEST
-        self._action_type = random.randint(1, 2)
-        self._target_column = random.randint(1, 3)
+        # # FOR TEST
+        # self._action_type = 0 #random.randint(1, 2)
+        # self._target_column = random.randint(1, 3)
 
         if self._action_type == 0:
             # Grasp의 경우에만, Drop 좌표를 계산함

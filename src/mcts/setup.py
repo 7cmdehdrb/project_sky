@@ -24,6 +24,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            "mcts_node = mcts.mcts_node:main",
         ],
     },
 )

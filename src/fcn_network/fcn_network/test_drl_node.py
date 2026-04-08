@@ -29,26 +29,46 @@ import datetime
 from loguru import logger
 from custom_msgs.srv import GetPolicyAction
 from base_package.image_manager import ImageManager
+from enum import Enum
+
+class Mode(Enum):
+    Occusion = 0
+    Simmilarity = 1
+    Nofcn = 2
+    MCTS = 3
+    CHAOS = 4
+    
 
 
 class ImageLogger:
-    def __init__(self, node: Node, col_num: int = 4):
+    def __init__(self, node: Node, col_num: int = 4, exp_num: int = -1, mode: Mode = Mode.Occusion):
         # 기본 인자
         self._node = node
         self._col_num = col_num
+        self._mode = mode
+        self._exp_num = exp_num
+
+        self._file_name_dict = {
+            Mode.Occusion: "DRL_10,0",
+            Mode.Simmilarity: "DRL_0,10",
+            Mode.Nofcn: "NF",
+            Mode.MCTS: "MCTS",
+            Mode.CHAOS: "CHAOS",
+        }
+
 
         # >>> 로그용 인자 >>>
         ROOT_DIR = "/home/irol/DRL-Occluded-Object-Search/src/fcn_network/log"
-        existing_dirs = [
-            d
-            for d in os.listdir(ROOT_DIR)
-            if d.startswith("exp_") and os.path.isdir(os.path.join(ROOT_DIR, d))
-        ]
-        existing_nums = sorted(
-            [int(d.split("_")[1]) for d in existing_dirs if d.split("_")[1].isdigit()]
-        )
-        next_num = (existing_nums[-1] if existing_nums else -1) + 1
-        self._log_dir = os.path.join(ROOT_DIR, f"exp_{next_num:03d}")
+        # existing_dirs = [
+        #     d
+        #     for d in os.listdir(ROOT_DIR)
+        #     if d.startswith("exp_") and os.path.isdir(os.path.join(ROOT_DIR, d))
+        # ]
+        # existing_nums = sorted(
+        #     [int(d.split("_")[1]) for d in existing_dirs if d.split("_")[1].isdigit()]
+        # )
+        # next_num = (existing_nums[-1] if existing_nums else -1) + 1
+        self._log_dir = os.path.join(ROOT_DIR, f"{self._file_name_dict[self._mode]}_{self._exp_num}")
         # <<< 로그용 인자 <<<
 
         # >>> 로깅 시작 >>>
@@ -189,9 +209,15 @@ class ImageLogger:
 
         if msg is None:
             if ignore_none is True:
+                self._node.get_logger().warn("Received None image, but ignore_none=True, so returning blank image.")
                 return np.zeros((480, 640, 3), dtype=np.uint8)
             else:
+                self._node.get_logger().warn("Received None image, returning None.")
                 return None
+            
+        if msg.width == 0 or msg.height == 0:
+            self._node.get_logger().warn("Received image with zero width or height, returning blank image.")
+            return np.zeros((480, 640, 3), dtype=np.uint8)
 
         np_image = self._image_manager.decode_message(
             image_msg=msg, desired_encoding="bgr8"
@@ -211,37 +237,16 @@ class ImageLogger:
         )
 
         # Images from FCN Service (복사본 생성)
-        fcn_1d_image = (
-            copy.copy(self.one_d_fcn_processed_image)
-            if self.one_d_fcn_processed_image is not None
-            else None
-        )
-        fcn_2d_image = (
-            copy.copy(self.two_d_fcn_processed_image)
-            if self.two_d_fcn_processed_image is not None
-            else None
-        )
+        # print(type(self.one_d_fcn_processed_image))
+        # print(type(self.two_d_fcn_processed_image))
+        fcn_1d_image = self._post_process_images(self.one_d_fcn_processed_image, ignore_none=True)
+        fcn_2d_image = self._post_process_images(self.two_d_fcn_processed_image, ignore_none=True)
+        
         processed_1d_pdm = (
             "None"
             if self.one_d_pdm_value is None
             else f"{'; '.join(f'{v:.2f}' for v in self.one_d_pdm_value.data)}"
         )
-
-        if any(
-            img is None
-            for img in [
-                raw_image,
-                closest_image,
-                segmentation_image,
-                fcn_1d_image,
-                fcn_2d_image,
-                processed_1d_pdm,
-            ]
-        ):
-            self._node.get_logger().error(
-                "하나 이상의 이미지 또는 1D PDM 값이 아직 수신되지 않았습니다. 로그 기록을 건너뜁니다."
-            )
-            return None
 
         images_to_save = [
             (raw_image, "raw"),
@@ -253,6 +258,10 @@ class ImageLogger:
         ]
 
         for image, name in images_to_save:
+            if image is None:
+                self._node.get_logger().warn(f"Invalid {name} image for step {self.step}...")
+                continue
+
             cv2.imwrite(os.path.join(self._log_dir, f"{self.step}_{name}.png"), image)
 
         logger.info(
@@ -261,10 +270,13 @@ class ImageLogger:
 
 
 class MockMainNode(Node):
-    def __init__(self, target_id: int, num_columns: int = 4):
+    
+    def __init__(self, target_id: int, num_columns: int = 4, mode: Mode = Mode.Occusion, exp_num: int = -1):
         super().__init__("mock_main_node")
+        self._mode = mode
+        self._exp_num = exp_num
 
-        self._image_logger = ImageLogger(node=self)
+        self._image_logger = ImageLogger(node=self, mode=self._mode, exp_num=self._exp_num)
         self._target_id = target_id
 
         if num_columns not in (4, 5):
@@ -349,6 +361,7 @@ class MockMainNode(Node):
             self._image_logger.one_d_fcn_processed_image = one_d_image
             self._image_logger.two_d_fcn_processed_image = two_d_image
 
+
             self._image_logger.log()
 
         except Exception as e:
@@ -356,12 +369,16 @@ class MockMainNode(Node):
 
 
 def main(args=None):
+
     TARGET_ID = 4
     NUM_COLUMNS = 5
 
+    EXP_NUM = 107
+    MODE = Mode.CHAOS
+
     rclpy.init(args=args)
     try:
-        node = MockMainNode(target_id=TARGET_ID, num_columns=NUM_COLUMNS)
+        node = MockMainNode(target_id=TARGET_ID, num_columns=NUM_COLUMNS, mode=MODE, exp_num=EXP_NUM)
     except ValueError as e:
         print(f"[ERROR] Failed to initialize node: {e}")
         return

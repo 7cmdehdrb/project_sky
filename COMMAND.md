@@ -25,6 +25,22 @@ ros2 launch object_tracker object_tracker.launch.py
 ros2 launch fcn_network fcn_network.launch.py
 `
 
+---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## FAKE CAMERA TOPIC
 
 `

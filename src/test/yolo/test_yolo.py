@@ -2,7 +2,7 @@
 from ultralytics import YOLO
 
 # 모델 로드
-model_path = "src/object_tracker/resource/Yolo/weights_11/weights/best.pt"
+model_path = "src/object_tracker/resource/best_hg.pt"
 model = YOLO(model_path)
 
 # 클래스 이름 확인

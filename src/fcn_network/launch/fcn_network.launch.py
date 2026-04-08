@@ -12,10 +12,14 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "model_path": f"{root_dir}/src/fcn_network/resource/250506_ver2/exported/policy.onnx",
+                "model_path": f"{root_dir}/src/fcn_network/resource/250506_ver1/exported/policy.onnx",
+                # "weight_fcn": [0.0, 0.0, 0.0, 0.0, 0.0],
+                "weight_fcn": [1.0, 1.0, 1.0, 1.0, 1.0],
             }
         ],
     )
+
+
     # 4 col : src/fcn_network/resource/exported/policy.onnx
     # 5 col : 250506_ver1/exported/policy.onnx
 
@@ -42,13 +46,19 @@ def generate_launch_description():
                 "fcn_gamma": 0.7,
                 # "model_path": f"{root_dir}/src/fcn_network/resource/best_model_45.pth",
                 # "model_path": f"{root_dir}/src/fcn_network/resource/best_model_45_b.pth",
-                "model_path": f"{root_dir}/src/fcn_network/resource/best_model_45_og.pth",
+                # "model_path": f"{root_dir}/src/fcn_network/resource/best_model_45_og.pth",
+                "model_path": f"{root_dir}/src/fcn_network/resource/4x5/best_model_4x5_ratio,O2,S8.pth",
                 "fcn_image_transform": True,
                 "peak_boundaries": [0, 170, 270, 384, 480, 640],
                 # "peak_boundaries": [0, 170, 300, 460, 640],
             }
         ],
     )
+
+    # src/fcn_network/resource/4x5/best_model_4x5_ratio,O0,S10.pth
+    # src/fcn_network/resource/4x5/best_model_4x5_ratio,O10,S0.pth
+
+
 
     # ratio,O0,S10.pth
     # ratio,O2,S8.pth
@@ -72,9 +82,9 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
-            # drl_node,
+            drl_node,
             drop_grid_node,
-            # fcn_server,
+            fcn_server,
             grid_node,
         ]
     )

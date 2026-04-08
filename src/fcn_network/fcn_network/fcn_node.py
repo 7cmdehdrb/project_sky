@@ -159,15 +159,16 @@ class FCNServiceNode(Node):
     def _publish_image(self):
         """타이머 콜백: 시각화된 이미지가 있으면 주기적으로 발행"""
         if self._latest_1d_pdm is not None:
-            self._image_manager.get_publisher(
-                self.get_name() + "/pdm_visualization"
-            ).publish(self._one_d_image)
+            if self._one_d_image is not None:
+                self._image_manager.get_publisher(
+                    self.get_name() + "/pdm_visualization"
+                ).publish(self._one_d_image)
 
         if self._target_map is not None:
-            self._image_manager.get_publisher(
-                self.get_name() + "/target_map_visualization"
-            ).publish(self._two_d_image)
-            self.publish_target_map_visualization()
+            if self._two_d_image is not None:
+                self._image_manager.get_publisher(
+                    self.get_name() + "/target_map_visualization"
+                ).publish(self._two_d_image)
 
     def image_callback(self, msg: Image):
         """카메라로부터 이미지를 상시 수신하여 최신 상태로 유지합니다."""
@@ -223,10 +224,10 @@ class FCNServiceNode(Node):
         # NumPy 배열을 Python 리스트(float)로 변환하여 할당
 
         self._one_d_image: Image = (
-            self.publish_pdm_visualization()
+            self._get_pdm_visualization()
         )  # 시각화 퍼블리싱 (옵션)
         self._two_d_image: Image = (
-            self.publish_target_map_visualization()
+            self._get_target_map_visualization()
         )  # 시각화 퍼블리싱 (옵션)
 
         response.data = weighted_peak_data.tolist()
@@ -237,7 +238,7 @@ class FCNServiceNode(Node):
         self.get_logger().info(f"[B] 추론 완료. 결과: {response.data}")
         return response
 
-    def publish_pdm_visualization(self):
+    def _get_pdm_visualization(self):
         """1초 주기로 1D PDM 그래프를 렌더링하여 ROS Image로 발행"""
         if self._latest_1d_pdm is None:
             return
@@ -272,7 +273,7 @@ class FCNServiceNode(Node):
 
         return img_msg
 
-    def publish_target_map_visualization(self):
+    def _get_target_map_visualization(self):
 
         ######################################################
 

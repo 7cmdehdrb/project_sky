@@ -96,8 +96,8 @@ class ObservationManager:
         [0, 128, 256, 384, 512, 640] 
         [0, 170, 300, 460, 640]
         """
-        # self._boundary = [0, 170, 300, 460, 640]
-        self._boundary = [0, 128, 256, 384, 512, 640]
+        self._boundary = [0, 170, 300, 460, 640]
+        # self._boundary = [0, 170, 270, 384, 480, 640]
 
         # col_idx를 key로, 해당 컬럼 내 객체 ID들을 거리가 가까운 순으로 정렬한 리스트
         self._column_sorted_objects: Dict[int, List[int]] = {}
@@ -215,6 +215,7 @@ class ObservationManager:
             marker: Marker
 
             if marker.ns == "grid_volume":
+                
                 row, col = decode_marker_id(marker.id)
                 row_int = ord(row) - ord("A")  # 0~4
                 col_int = int(col)  # 0~5
@@ -323,6 +324,7 @@ class ObservationManager:
             col_idx: [obj["id"] for obj in sorted(objects, key=lambda x: x["distance"])]
             for col_idx, objects in columns_data.items()
         }
+        print(f"컬럼별로 가장 가까운 객체 ID 리스트: {self._column_sorted_objects}")
 
     def get_observation(self, target_object_id: int) -> np.ndarray:
         self._process_column_objects()
