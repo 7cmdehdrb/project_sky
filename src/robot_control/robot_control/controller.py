@@ -180,12 +180,12 @@ class UR5eController:
                 "shoulder_pan_joint",
             ],
             position=[
-                -1.047192172413208,
-                -2.0944418907165527,
-                3.141551657313965,
-                -1.5707863012896937,
-                3.1415441036224365,
-                -3.141532007847921,
+                -1.0001002115062256,
+                -1.957735538482666,
+                2.9489118295856933,
+                -1.323235336934225,
+                3.1355972290039062,
+                -2.8887959162341517,
             ],
         )
         self._waiting_joints = JointState(
@@ -221,13 +221,13 @@ class UR5eController:
             qos_profile_system_default,
         )
 
-        self._collision_objects: List[CollisionObject] = None
-        self._collision_objects_sub = self._node.create_subscription(
-            MarkerArray,
-            "/grid_markers",
-            self._collision_objects_callback,
-            qos_profile_system_default,
-        )
+        self._collision_objects: List[CollisionObject] = []
+        # self._collision_objects_sub = self._node.create_subscription(
+        #     MarkerArray,
+        #     "/grid_markers",
+        #     self._collision_objects_callback,
+        #     qos_profile_system_default,
+        # )
 
         # >>>>> MoveIt2 Service Managers <<<<<
         self._fk_manager = FK_ServiceManager(node)
@@ -279,12 +279,14 @@ class UR5eController:
             joint_states=self._safety_joints,
             end_effector=self._end_effector_link,
         )
-    
+
     @property
     def second_safety_pose(self) -> PoseStamped | None:
         second_safety_joint = copy.deepcopy(self._safety_joints)
-        second_safety_joint.position[-1] += np.deg2rad(90.0)  # shoulder_pan_joint를 yaw 방향으로 90도 회전
-        
+        second_safety_joint.position[-1] += np.deg2rad(
+            90.0
+        )  # shoulder_pan_joint를 yaw 방향으로 90도 회전
+
         return self._fk_manager.run(
             joint_states=second_safety_joint,
             end_effector=self._end_effector_link,
@@ -520,9 +522,9 @@ class UR5eController:
                 scene=current_scene,
             )
 
-        _, _ = retry_step(step_a_clear_scene, max_retries=10)
+        _, _ = retry_step(step_a_clear_scene, max_retries=999)
 
-        _, _ = retry_step(step_b_apply_new_objects, max_retries=10)
+        _, _ = retry_step(step_b_apply_new_objects, max_retries=999)
 
     def plan_and_execute_cartesian_path(
         self, waypoints: List[Pose], max_retries: int = 3
@@ -562,7 +564,7 @@ class UR5eController:
 
                 _, traj = retry_step(
                     step_func=self._cartesian_path_manager.run,
-                    max_retries=10,
+                    max_retries=999,
                     delay=0.5,
                     header=self._get_header(),
                     waypoints=[waypoint],
@@ -591,6 +593,10 @@ class UR5eController:
 
             # 4. Trajectory 병합
             merged_traj = merge_trajectories(trajs)
+            # merged_traj = self._execute_trajectory_manager.scale_trajectory(
+            #     trajectory=merged_traj,
+            #     scale_factor=0.5,
+            # )
             total_duration = self.get_trajectory_duration(merged_traj)
 
             # 5. Trajectory 실행
@@ -670,7 +676,10 @@ class UR5eController:
                     f"Waypoint {i + 1}/{len(current_waypoints)}에 대한 경로 계획 중..."
                 )
 
-                goal_robot_states: RobotState = self._ik_manager.run(
+                _, goal_robot_states = retry_step(
+                    step_func=self._ik_manager.run,
+                    max_retries=999,
+                    delay=0.5,
                     pose_stamped=PoseStamped(
                         header=self._get_header(),
                         pose=waypoint,
@@ -678,6 +687,7 @@ class UR5eController:
                     joint_states=current_start_state,
                     end_effector=self._end_effector_link,
                 )
+                goal_robot_states: RobotState
 
                 constraint = self._kinematic_path_manager.get_goal_constraint(
                     goal_joint_states=goal_robot_states.joint_state,
@@ -686,10 +696,39 @@ class UR5eController:
 
                 _, traj = retry_step(
                     step_func=self._kinematic_path_manager.run,
-                    max_retries=10,
+                    max_retries=999,
                     delay=0.5,
                     goal_constraints=[constraint],
                     path_constraints=None,
+                    # path_constraints=Constraints(
+                    #     name="pc",
+                    #     joint_constraints=[],
+                    #     position_constraints=[
+                    #         PositionConstraint(
+                    #             header=self._get_header(),
+                    #             link_name=self._end_effector_link,
+                    #             target_point_offset=Vector3(x=0.0, y=0.0, z=0.0),
+                    #             constraint_region=BoundingVolume(
+                    #                 primitives=[
+                    #                     SolidPrimitive(
+                    #                         type=SolidPrimitive.BOX,
+                    #                         dimensions=[1.0, 1e6, 1e6],
+                    #                     )
+                    #                 ],
+                    #                 primitive_poses=[
+                    #                     Pose(
+                    #                         orientation=Quaternion(
+                    #                             x=0.0, y=0.0, z=0.0, w=1.0
+                    #                         ),
+                    #                         position=Point(x=0.0, y=0.0, z=0.0),
+                    #                     )
+                    #                 ],
+                    #             ),
+                    #         )
+                    #     ],
+                    #     orientation_constraints=[],
+                    #     visibility_constraints=[],
+                    # ),
                     joint_states=current_start_state,
                     num_planning_attempts=100,
                     allowed_planning_time=1.0,
@@ -718,6 +757,10 @@ class UR5eController:
 
             # 4. Trajectory 병합
             merged_traj = merge_trajectories(trajs)
+            # merged_traj = self._execute_trajectory_manager.scale_trajectory(
+            #     trajectory=merged_traj,
+            #     scale_factor=0.5,
+            # )
             total_duration = self.get_trajectory_duration(merged_traj)
 
             # 5. Trajectory 실행
@@ -788,7 +831,7 @@ class UR5eController:
             # 이전에 이동했던 궤적은 자연스럽게 무시되고 "현재 위치 -> 목표 위치"의 새 궤적이 생성됨
             success, traj = retry_step(
                 step_func=self._kinematic_path_manager.run,
-                max_retries=10,
+                max_retries=999,
                 delay=0.5,
                 goal_constraints=[goal_constraint],
                 path_constraints=None,

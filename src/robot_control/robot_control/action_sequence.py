@@ -134,6 +134,7 @@ class ActionSequence:
             {}
         )  # 상태별 실행 메서드를 저장하는 딕셔너리, 자식 클래스에서 채워질 예정
 
+        self._fixed_z = 0.30
         self._state = self.State.HOME  # 초기 상태는 HOME
 
     @property
@@ -155,6 +156,7 @@ class ActionSequence:
             raise ValueError(
                 "Invalid type or shape for target_point. Expected Point, np.ndarray of shape (3,), or tuple of 3 floats."
             )
+        self._target_point.z = self._fixed_z  # z값은 고정
 
     @property
     def drop_point(self):
@@ -245,12 +247,25 @@ class GraspActionSequence(ActionSequence):
         safety_pose: Pose = self._ur_controller.safety_pose.pose
 
         # target_point에서 떨어진 앞 위치 (UR 정면의 역방향)
+        first_aim_position = copy.deepcopy(self._target_point)
+
+        # Align the first aim position with safety pose based on direction
+        if self._direction in (AxisDirection.POS_X, AxisDirection.NEG_X):
+            first_aim_position.x = safety_pose.position.x
+        elif self._direction in (AxisDirection.POS_Y, AxisDirection.NEG_Y):
+            first_aim_position.y = safety_pose.position.y
+
+        first_aim_position.z = safety_pose.position.z
+
         first_aim_pose = Pose(
-            position=self._direction.move_point(
-                point=self._target_point, distance=0.1, reverse=True
-            ),
+            position=first_aim_position,
             orientation=self._ur_controller.home_orientation,
         )
+
+        temp_aim_pose = copy.deepcopy(first_aim_pose)
+        temp_aim_pose.position.z = (
+            self._target_point.z
+        )  # target_point와 같은 높이로 이동한 임시 포즈
 
         # target_point에서, 조금 떨어진 앞 위치 (UR 정면의 역방향)
         second_aim_pose = Pose(
@@ -266,9 +281,14 @@ class GraspActionSequence(ActionSequence):
             orientation=self._ur_controller.home_orientation,
         )
 
+        self._ur_controller.plan_and_execute_kinematic_path(
+            waypoints=[safety_pose, first_aim_pose],
+            max_retries=999,
+        )
+
         self._ur_controller.plan_and_execute_cartesian_path(
-            waypoints=[safety_pose, first_aim_pose, second_aim_pose, target_pose],
-            max_retries=20,
+            waypoints=[temp_aim_pose, second_aim_pose, target_pose],
+            max_retries=999,
         )
 
     def _grasp(self):
@@ -283,18 +303,28 @@ class GraspActionSequence(ActionSequence):
             ),
             orientation=self._ur_controller.home_orientation,
         )
-        second_aim_pose.position.z += 0.05  # 높이도 약간 올려서 중간 세이프티 자세로 이동
+        second_aim_pose.position.z += (
+            0.05  # 높이도 약간 올려서 중간 세이프티 자세로 이동
+        )
 
         # target_point에서, 떨어진 앞 위치 (UR 정면의 역방향)
+        safety_pose: Pose = self._ur_controller.safety_pose.pose
+        first_aim_position = copy.deepcopy(self._target_point)
+
+        # Align the first aim position with safety pose based on direction
+        if self._direction in (AxisDirection.POS_X, AxisDirection.NEG_X):
+            first_aim_position.x = safety_pose.position.x
+        elif self._direction in (AxisDirection.POS_Y, AxisDirection.NEG_Y):
+            first_aim_position.y = safety_pose.position.y
+
         first_aim_pose = Pose(
-            position=self._direction.move_point(
-                point=self._target_point, distance=0.1, reverse=True
-            ),
+            position=first_aim_position,
             orientation=self._ur_controller.home_orientation,
         )
-        first_aim_pose.position.z += 0.05  # 높이도 약간 올려서 중간 세이프티 자세로 이동
+        first_aim_pose.position.z = second_aim_pose.position.z
 
-        safety_pose: Pose = self._ur_controller.safety_pose.pose
+        temp_aim_pose = copy.deepcopy(first_aim_pose)
+        temp_aim_pose.position.z = safety_pose.position.z  # safety_pose와 같은 높이
 
         second_safety_pose: Pose = self._ur_controller.second_safety_pose.pose
 
@@ -309,18 +339,20 @@ class GraspActionSequence(ActionSequence):
             current_dir=self._direction, angle_deg=int(90)
         ).move_pose(pose=drop_pose, distance=0.05, reverse=True)
 
+        self._ur_controller.plan_and_execute_cartesian_path(
+            waypoints=[second_aim_pose, first_aim_pose, temp_aim_pose],
+            max_retries=999,
+        )
+
         self._ur_controller.plan_and_execute_kinematic_path(
             waypoints=[
-                second_aim_pose,
-                first_aim_pose,
                 safety_pose,
                 second_safety_pose,
                 first_drop_pose,
                 drop_pose,
             ],
-            max_retries=20,
+            max_retries=999,
         )
-
 
     def _release(self):
         self._gripper_controller.control_gripper(open=True, max_effort=0.0)
@@ -345,22 +377,6 @@ class GraspActionSequence(ActionSequence):
         self._ur_controller.moveJ(joint_states=self._ur_controller.waiting_joints)
 
         return None
-
-    # def step(self):
-
-    #     self._node.get_logger().info(f"Executing step for state: {self._state.name}")
-
-    #     self._methods[self._state]()
-
-    #     if self._state == self.State.RETURN_HOME:
-    #         self._state = (
-    #             self.State.HOME
-    #         )  # 다음 액션 시퀸스에서도 HOME부터 시작하도록 초기화
-    #         return True  # 액션 시퀸스 종료 신호
-
-    #     else:
-    #         self._state = self.State(self._state.value + 1)
-    #         return False  # 액션 시퀸스 진행 중 신호
 
 
 class SweepActionSequence(ActionSequence):
@@ -389,6 +405,8 @@ class SweepActionSequence(ActionSequence):
         self._sweep_direction = sweep_direction
         self._sweep_distance = sweep_distance
         self._offset_distance = offset_distance
+
+        self._fixed_z += 0.05  # Sweep을 위해 z값을 약간 더 높게 설정
 
         self._methods = {
             self.State.HOME: self._home,
@@ -421,19 +439,41 @@ class SweepActionSequence(ActionSequence):
         # ur_controller에 정의된 safety_pose 시작
         safety_pose: Pose = self._ur_controller.safety_pose.pose
 
+        # target_point 에서, safety pose와 같은 평면 상 의 점
+        align_position = copy.deepcopy(self._target_point)
+
+        if self._direction in (AxisDirection.POS_X, AxisDirection.NEG_X):
+            align_position.x = safety_pose.position.x
+        elif self._direction in (AxisDirection.POS_Y, AxisDirection.NEG_Y):
+            align_position.y = safety_pose.position.y
+
+        align_pose = Pose(
+            position=align_position,
+            orientation=self._ur_controller.home_orientation,
+        )
+        align_pose.position.z = safety_pose.position.z
+
+        # 거기서 높이만 맞추는 위치 + 회전
+        align_down_pose = copy.deepcopy(align_pose)
+        align_down_pose.position.z = self._target_point.z
+        align_down_pose.orientation = self._ur_controller.sweep_orientation
+
+        align_down_offset_pose = self._sweep_direction.move_pose(
+            pose=align_down_pose, distance=self._offset_distance, reverse=True
+        )
+
         # target_point에서 떨어진 앞 + 살짝 옆 위치 (UR 정면의 역방향)
-        p1 = self._direction.move_point(
-            point=self._target_point, distance=0.1, reverse=True
-        )
-        p2 = self._sweep_direction.move_point(
-            point=p1,
-            distance=self._offset_distance,
-            reverse=True,
-        )
         aim_pose = Pose(
-            position=p2,
+            position=self._sweep_direction.move_point(
+                point=self._direction.move_point(
+                    point=self._target_point, distance=0.1, reverse=True
+                ),
+                distance=self._offset_distance,
+                reverse=True,
+            ),
             orientation=self._ur_controller.sweep_orientation,
         )
+        aim_pose.position.z = self._target_point.z
 
         # target_point에서, 살짝 옆 위치 (UR 정면의 역방향)
         target_pose = Pose(
@@ -444,10 +484,16 @@ class SweepActionSequence(ActionSequence):
             ),
             orientation=self._ur_controller.sweep_orientation,
         )
+        target_pose.position.z = self._target_point.z
+
+        self._ur_controller.plan_and_execute_kinematic_path(
+            waypoints=[safety_pose, align_pose],
+            max_retries=999,
+        )
 
         self._ur_controller.plan_and_execute_cartesian_path(
-            waypoints=[safety_pose, aim_pose, target_pose],
-            max_retries=20,
+            waypoints=[align_down_offset_pose, aim_pose, target_pose],
+            max_retries=999,
         )
 
     def _sweep(self):
@@ -462,35 +508,66 @@ class SweepActionSequence(ActionSequence):
         )
 
         self._ur_controller.plan_and_execute_cartesian_path(
-            waypoints=[target_pose], max_retries=20
+            waypoints=[target_pose], max_retries=999
         )
-        pass
 
     def _return_home(self):
         # target_point에서 떨어진 앞 + 살짝 옆 위치 (UR 정면의 역방향)
-        p1 = self._direction.move_point(
-            point=self._target_point, distance=0.1, reverse=True
-        )
-        p2 = self._sweep_direction.move_point(
-            point=p1,
-            distance=self._sweep_distance,
-            reverse=False,
-        )
         aim_pose = Pose(
-            position=p2,
+            position=self._sweep_direction.move_point(
+                point=self._direction.move_point(
+                    point=self._target_point, distance=0.1, reverse=True
+                ),
+                distance=self._sweep_distance,
+                reverse=False,
+            ),
             orientation=self._ur_controller.sweep_orientation,
         )
 
+        # ur_controller에 정의된 safety_pose 시작
         safety_pose: Pose = self._ur_controller.safety_pose.pose
 
-        waiting_pose: Pose = self._ur_controller.waiting_pose.pose
+        # target_point 에서, safety pose와 같은 평면 상 의 점
+        align_position = copy.deepcopy(self._target_point)
+
+        if self._direction in (AxisDirection.POS_X, AxisDirection.NEG_X):
+            align_position.x = safety_pose.position.x
+        elif self._direction in (AxisDirection.POS_Y, AxisDirection.NEG_Y):
+            align_position.y = safety_pose.position.y
+
+        align_pose = Pose(
+            position=align_position,
+            orientation=self._ur_controller.home_orientation,
+        )
+        if self._direction in (AxisDirection.POS_X, AxisDirection.NEG_X):
+            align_pose.position.y = aim_pose.position.y
+        elif self._direction in (AxisDirection.POS_Y, AxisDirection.NEG_Y):
+            align_pose.position.x = aim_pose.position.x
+        align_pose.position.z = safety_pose.position.z
+
+        # 거기서 높이만 맞추는 위치 + 회전
+        align_down_pose = copy.deepcopy(align_pose)
+
+        align_down_pose.position.z = self._target_point.z
+        align_down_pose.orientation = self._ur_controller.sweep_orientation
+
+        if self._direction in (AxisDirection.POS_X, AxisDirection.NEG_X):
+            align_down_pose.position.y = aim_pose.position.y
+        elif self._direction in (AxisDirection.POS_Y, AxisDirection.NEG_Y):
+            align_down_pose.position.x = aim_pose.position.x
+
+        align_down_offset_pose = self._sweep_direction.move_pose(
+            pose=align_down_pose, distance=self._offset_distance, reverse=True
+        )
+
+        self._ur_controller.plan_and_execute_cartesian_path(
+            waypoints=[aim_pose, align_down_offset_pose, align_pose],
+            max_retries=999,
+        )
 
         self._ur_controller.plan_and_execute_kinematic_path(
-            # waypoints=[aim_pose, safety_pose, waiting_pose],
-            waypoints=[aim_pose, safety_pose],
-            max_retries=20,
+            waypoints=[safety_pose],
+            max_retries=999,
         )
 
         self._ur_controller.moveJ(joint_states=self._ur_controller.waiting_joints)
-
-

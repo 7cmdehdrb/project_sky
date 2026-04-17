@@ -39,7 +39,7 @@ from robot_control.action_sequence import (
 from robot_control.controller import UR5eController, RobotiqController
 from custom_msgs.srv import GetPolicyAction, GetNextDropCell
 
-
+import json
 from rclpy.node import Node
 
 # from your_package.srv import GetFCNResult (실제 사용하는 패키지에 맞게 import 필요)
@@ -104,14 +104,85 @@ class TargetObjectPicker:
         self._node = node
         self._transform_manager = transform_manager
 
+        self._cloest_object_ids: List[int] = []
+        self._cloest_object_distances: List[float] = []
+
         self._sub = self._node.create_subscription(
             MarkerArray,
             "/grid_markers",
             self._marker_callback,
             qos_profile=qos_profile_system_default,
         )
+        self._c_object_ids_sub = self._node.create_subscription(
+            Int32MultiArray,
+            "/closest_object_classifier/closest_object_ids",
+            self._closest_object_ids_callback,
+            qos_profile=qos_profile_system_default,
+        )
+        self._c_object_dist_sub = self._node.create_subscription(
+            Float32MultiArray,
+            "/front_object_distance",
+            callback=self._cloest_distance_callback,
+            qos_profile=qos_profile_system_default,
+        )
 
         self._msg: MarkerArray = None
+
+    @property
+    def closest_object_ids(self) -> List[int]:
+        return self._cloest_object_ids
+
+    @property
+    def closest_object_distances(self) -> List[float]:
+        return self._cloest_object_distances
+
+    def check_distance_valid(self, idx: int, action: int) -> bool:
+        if action == 0:
+            return True  # Grasp 액션은 항상 유효하다고 간주 (거리 비교 없이 실행)
+
+        if action == 1:
+            # 오른쪽으로 미는 액션. 오른쪽 index의 물체가 더 가깝거나, 같으면 무효
+            # 혹은, 오른쪽 index가 범위를 벗어나면, 무효
+            target_dist = self._cloest_object_distances[idx]
+            right_idx = idx + 1
+
+            if right_idx >= len(self._cloest_object_distances):
+                return False
+
+            right_dist = self._cloest_object_distances[right_idx]
+            if (
+                np.abs(right_dist - target_dist) <= 0.1
+            ):  # Threshold for distance comparison
+                return False
+
+            return True
+
+        elif action == 2:
+            # 왼쪽으로 미는 액션. 왼쪽 index의 물체가 더 가깝거나, 같으면 무효
+            # 혹은, 왼쪽 index가 범위를 벗어나면, 무효
+            target_dist = self._cloest_object_distances[idx]
+            left_idx = idx - 1
+
+            if left_idx < 0:
+                return False
+
+            left_dist = self._cloest_object_distances[left_idx]
+            if (
+                np.abs(left_dist - target_dist) <= 0.1
+            ):  # Threshold for distance comparison
+                return False
+
+            return True
+
+        else:
+            # 그냥 무효
+            return False
+
+    def _closest_object_ids_callback(self, msg: Int32MultiArray):
+        self._cloest_object_ids = msg.data
+
+    def _cloest_distance_callback(self, msg: Float32MultiArray):
+        self._cloest_object_distances = msg.data
 
     def _marker_callback(self, msg: MarkerArray):
         self._msg = msg
@@ -205,21 +276,58 @@ class DropGridSyncClient:
             return None
 
 
+class FakeActionCreator:
+    def __init__(self, file_path: str):
+        # 파일 경로에서 객체 이름과 인덱스 매핑 정보를 읽어와서 SmartNameDict에 저장
+        """
+        {
+            "actions": [
+                {
+                    "action_type": 0,
+                    "target_column": 2
+                },
+                {
+                    "action_type": 1,
+                    "target_column": 3
+                }
+            ]
+        }
+        """
+
+        data = json.load(open(file_path, "r"))
+        self._idx = 0
+        self._actions = data["actions"]
+
+    def get_action(self) -> Tuple[int, int]:
+        action_info = self._actions[self._idx]
+        self._idx += 1
+
+        return action_info["action_type"], action_info["target_column"]
+
+
 class MainControlNode(Node):
 
     class State(Enum):
         SEARCH = 0
         ACTION = 1
         END = 2
+        FINISHED = 999
 
-    def __init__(self):
+    def __init__(self, target_class_idx: int = 0):
         super().__init__("main_control_node")
 
         # 초기 상태 설정
+        self._target_class_idx = target_class_idx
+        self._is_finished = False
         self._state = self.State.SEARCH
 
         # UR5eController 인스턴스
         self._ur5e_controller = UR5eController(node=self)
+
+        self._fake_action_creator = FakeActionCreator(
+            file_path="/home/irol/DRL-Occluded-Object-Search/src/robot_control/resource/fake_action.json"
+        )
+        self._use_fake_action = True  # True로 설정하면 DRLClient 대신 FakeActionCreator에서 액션을 가져와서 실행 (테스트 용도)
 
         # RobotiqController 인스턴스 (현재는 None으로 전달, 실제 구현 필요)
         self._robotiq_controller = RobotiqController(
@@ -242,7 +350,7 @@ class MainControlNode(Node):
             direction=AxisDirection.POS_X,
             sweep_direction=AxisDirection.NEG_Y,  # 오른쪽으로 스윕
             sweep_distance=0.1,  # 스윕 거리 (예시값, 실제로는 DRL 모듈에서 받아와야 할 수도 있음)
-            offset_distance=0.05,  # 타겟 포인트에서 스윕 시작 지점까지의 오프셋 거리 (예시값, 실제로는 DRL 모듈에서 받아와야 할 수도 있음)
+            offset_distance=0.06,  # 타겟 포인트에서 스윕 시작 지점까지의 오프셋 거리 (예시값, 실제로는 DRL 모듈에서 받아와야 할 수도 있음)
         )
         self._sweep_left_action_sequence = SweepActionSequence(
             node=self,
@@ -252,7 +360,7 @@ class MainControlNode(Node):
             direction=AxisDirection.POS_X,
             sweep_direction=AxisDirection.POS_Y,  # 왼쪽으로 스윕
             sweep_distance=0.1,  # 스윕 거리 (예시값, 실제로는 DRL 모듈에서 받아와야 할 수도 있음)
-            offset_distance=0.05,  # 타겟 포인트에서 스윕 시작 지점까지의 오프셋 거리 (예시값, 실제로는 DRL 모듈에서 받아와야 할 수도 있음)
+            offset_distance=0.06,  # 타겟 포인트에서 스윕 시작 지점까지의 오프셋 거리 (예시값, 실제로는 DRL 모듈에서 받아와야 할 수도 있음)
         )
 
         self._sequences: dict[int, ActionSequence] = {
@@ -263,7 +371,7 @@ class MainControlNode(Node):
 
         self._transform_manager = TransformManager(node=self)
 
-        self._drl_client = DRLClient(node=self, target_class_idx=4)
+        self._drl_client = DRLClient(node=self, target_class_idx=self._target_class_idx)
         self._drop_client = DropGridSyncClient(node=self)
         self._target_picker = TargetObjectPicker(
             node=self, transform_manager=self._transform_manager
@@ -275,6 +383,7 @@ class MainControlNode(Node):
             self.State.SEARCH: self._drl_search,
             self.State.ACTION: self._execute_action,
             self.State.END: self._end,
+            self.State.FINISHED: self._finished,
         }
 
         self._action_type: int = None
@@ -296,10 +405,54 @@ class MainControlNode(Node):
 
         self._action_type: int = res.action_type
         self._target_column: int = res.target_column
+        one_d_pdm: List[float] = res.one_d_pdm
 
-        # # FOR TEST
-        # self._action_type = 0 #random.randint(1, 2)
-        # self._target_column = random.randint(1, 3)
+        # FOR TEST
+        # self._action_type = 1
+        # self._target_column = 3
+
+        if self._use_fake_action:
+            f_action, f_column = self._fake_action_creator.get_action()
+            self._action_type = f_action
+            self._target_column = f_column
+
+        # 가장 가까운 물체 리스트에, 타겟 물체가 있다면, 강제로 그것을 피킹합니다.
+        # 이후, Flag를 변경하여 무한 루프합니다.
+        if self._target_class_idx in self._target_picker.closest_object_ids:
+            self.get_logger().info(
+                f"타겟 클래스 인덱스 {self._target_class_idx}가 가장 가까운 물체 리스트에 존재합니다. 강제로 Grasp 액션을 수행하도록 설정합니다."
+            )
+
+            self._is_finished = True
+            self._action_type = 0  # Grasp로 강제 설정
+            self._target_column = self._target_picker.closest_object_ids.index(
+                self._target_class_idx
+            )
+
+            self.get_logger().info(f"INDEX: {self._target_column}")
+
+        # 해당 출력이 정상적인지 검사하고, 정상적이지 않다면, one_d_pdm의 기반한 값으로 바꿔치기 합니다.
+        elif self._target_picker.closest_object_ids[self._target_column] == -1:
+            self.get_logger().error(
+                f"DRL 모듈에서 받은 타겟 컬럼 {self._target_column}에 대한 Closest Object ID가 -1로 나타났습니다. one_d_pdm 값을 기반으로 타겟 컬럼을 재설정합니다."
+            )
+
+            # one_d_pdm 값을 기반으로 타겟 컬럼을 재설정
+            # one_d_pdm에서 가장 높은 값을 가진 인덱스를 타겟 컬럼으로 설정
+            self._action_type = 0  # Grasp로 강제 설정
+            self._target_column = np.argmax(one_d_pdm)
+
+            self.get_logger().info(f"재설정된 타겟 컬럼: {self._target_column}")
+
+        # check action validation
+        is_action_valid = self._target_picker.check_distance_valid(
+            idx=self._target_column, action=self._action_type
+        )
+        if not is_action_valid:
+            self.get_logger().warn(
+                f"판별된 액션이 유효하지 않습니다. Action Type: {self._action_type}, Target Column: {self._target_column}. 액션을 무시하고 다음 탐색으로 넘어갑니다."
+            )
+            self._action_type = 0  # Grasp으로 강제 설정
 
         if self._action_type == 0:
             # Grasp의 경우에만, Drop 좌표를 계산함
@@ -346,13 +499,23 @@ class MainControlNode(Node):
     def _end(self):
         return False
 
+    def _finished(self):
+        while rclpy.ok():
+            continue
+        return True
+
     def _update_state(self):
         # State 변경 로직. 변경 요망: 실제 DRL 모듈의 응답에 따라 상태를 변경하도록 구현 필요
         self._state = self.State(self._state.value + 1)
         if self._state == self.State.END:
-            self._state = (
-                self.State.SEARCH
-            )  # END 상태에서 다시 SEARCH로 돌아가도록 설정 (필요에 따라 변경 가능)
+
+            if self._is_finished:
+                # Task가 종료될, 경우 Finished 로 이동하여, 무한 루프에 갇힙니다.
+                self._state = self.State.FINISHED
+            else:
+                # Task가 종료되지 않을 경우, SEARCH로 돌아가서, 다시 DRL 모듈에 요청을 보냅니다.
+                self._state = self.State.SEARCH
+
         self.get_logger().info(f"State changed to: {self._state.name}")
         return self._state
 
@@ -365,7 +528,7 @@ class MainControlNode(Node):
 def main(args=None):
     rclpy.init(args=args)
 
-    node = MainControlNode()
+    node = MainControlNode(target_class_idx=15)
 
     th = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
     th.start()
@@ -373,7 +536,7 @@ def main(args=None):
     hz = 30.0
     r = node.create_rate(hz)
 
-    WAIT_TIME = 2.0
+    WAIT_TIME = 3.0
     for _ in range(int(WAIT_TIME * hz)):
         # 초기화 대기 시간 동안 노드가 정상적으로 실행되고 있는지 확인하기 위해 로그 출력
         r.sleep()

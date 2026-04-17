@@ -19,7 +19,6 @@ def generate_launch_description():
         ],
     )
 
-
     # 4 col : src/fcn_network/resource/exported/policy.onnx
     # 5 col : 250506_ver1/exported/policy.onnx
 
@@ -58,14 +57,11 @@ def generate_launch_description():
     # src/fcn_network/resource/4x5/best_model_4x5_ratio,O0,S10.pth
     # src/fcn_network/resource/4x5/best_model_4x5_ratio,O10,S0.pth
 
-
-
     # ratio,O0,S10.pth
     # ratio,O2,S8.pth
     # ratio,O5,S5.pth
     # ratio,O7,S3.pth
     # ratio,O10,S0.pth
-
 
     grid_node = Node(
         package="fcn_network",

@@ -224,6 +224,7 @@ class GridCell:
             id=marker_id,
             type=Marker.CUBE,
             action=Marker.ADD,
+            lifetime=BuiltinDuration(sec=0, nanosec=500000000),  # 0.5초 동안 표시
             pose=Pose(
                 position=Point(
                     x=float(self._mean[0]),
@@ -237,9 +238,11 @@ class GridCell:
                 y=float(self._scale[1]),
                 z=float(self._scale[2]),
             ),
-            color=ColorRGBA(r=0.0, g=0.0, b=1.0, a=0.5),  # 파란색 (볼륨 마커는 항상 파란색으로 표시, 점유 여부와 무관하게)
+            color=ColorRGBA(
+                r=0.0, g=0.0, b=1.0, a=0.5
+            ),  # 파란색 (볼륨 마커는 항상 파란색으로 표시, 점유 여부와 무관하게)
         )
-        
+
         return volume_marker
 
 

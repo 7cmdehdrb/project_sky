@@ -5,12 +5,18 @@ ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.ena
 `
 
 `
+ros2 launch realsense2_camera rs_launch.py camera_name:="camera1" pointcloud.enable:=true rgb_camera.color_profile:="1280x720x30" depth_module.depth_profile:="1280x720x30" rgb_camera.enable_auto_exposure:=false rgb_camera.exposure:="100"
+`
+
+`
 python3 src/object_tracker/object_tracker/action_cam.py
 `
 
 ## Static TF
 `
 ros2 run tf2_ros static_transform_publisher -0.04 -0.37 0.45 0.0 0.0 0.7071 0.7071 world camera1_link
+
+ros2 run tf2_ros static_transform_publisher -0.37 0.04 0.45 0.0 0.0 0.0 1.0 world camera1_link
 `
 
 

@@ -70,7 +70,7 @@ def generate_launch_description():
         [
             ur_control,
             move_group,
-            rsp,
+            # rsp,
             # gripper
             # moveit_rviz,  # RViz는 필요할 때 켜는 걸로 (시뮬레이터에서는 안 켜도 충분히 테스트 가능)
         ]
