@@ -19,6 +19,8 @@ from tf2_ros import *
 
 # Python
 import sys
+import datetime
+import cv2
 import os
 import copy
 import numpy as np
@@ -40,9 +42,61 @@ from robot_control.controller import UR5eController, RobotiqController
 from custom_msgs.srv import GetPolicyAction, GetNextDropCell
 
 import json
+from base_package.image_manager import ImageManager
 from rclpy.node import Node
 
 # from your_package.srv import GetFCNResult (실제 사용하는 패키지에 맞게 import 필요)
+
+
+class ImageSaver:
+    def __init__(self, node: Node):
+        # 기본 인자
+        self._node = node
+
+        # >>> 로그용 인자 >>>
+        self._log_dir = "/home/irol/DRL-Occluded-Object-Search/ssal"
+        # <<< 로그용 인자 <<<
+
+        # >>> 로깅 시작 >>>
+        os.makedirs(self._log_dir, exist_ok=True)
+
+        # >>> ROS Subscriber & Publisher 초기화 >>>
+        self._raw_image: Image = None
+
+        self._image_manager = ImageManager(
+            node=self._node,
+            subscribed_topics=[
+                {
+                    "topic_name": "/camera/camera1/color/image_raw",
+                    "callback": self._callback_raw_image,
+                }
+            ],
+            published_topics=[],
+        )
+
+    def _callback_raw_image(self, msg: Image):
+        self._raw_image = msg
+
+    def _post_process_images(self, msg: Image, ignore_none: bool = False) -> np.ndarray:
+
+        if msg is None:
+            self._node.get_logger().warn("Received None image, returning None.")
+            return None
+
+        np_image = self._image_manager.decode_message(
+            image_msg=msg, desired_encoding="bgr8"
+        )
+        if np_image.shape[0] != 480 or np_image.shape[1] != 640:
+            np_image = self._image_manager.crop_image(img=np_image)
+
+        return np_image
+
+    def log(self):
+        # Images from Subscribers
+        raw_image = self._post_process_images(self._raw_image)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        cv2.imwrite(os.path.join(self._log_dir, f"image_{timestamp}.png"), raw_image)
 
 
 class DRLClient:
@@ -71,10 +125,10 @@ class DRLClient:
         self._target_class_idx = int(val)
 
     def send_request_sync(self) -> GetPolicyAction.Response:
-        self.req_cnt += 1
         self._node.get_logger().info(f"▶️ [{self.req_cnt}]번째 동기식 추론 요청 전송...")
 
         req = GetPolicyAction.Request()
+        req.index = self.req_cnt  # Episode 구분을 위한 인덱스 추가
         req.target_id = int(self._target_class_idx)
 
         self._node.get_logger().info(
@@ -91,6 +145,8 @@ class DRLClient:
             self._node.get_logger().info(
                 f"✅ [{self.req_cnt}]번째 응답 수신: Action Type = {action_type}, Target Column = {target_column}"
             )
+
+            self.req_cnt += 1
 
             return result
 
@@ -247,6 +303,7 @@ class DropGridSyncClient:
     def __init__(self, node: Node):
         self._node = node
 
+        self._drop_cnt = 0
         self._client = self._node.create_client(GetNextDropCell, "request_drop_cell")
 
         self._node.get_logger().info("DropGrid 서비스 서버 대기 중...")
@@ -258,6 +315,7 @@ class DropGridSyncClient:
 
     def request_next_drop_cell_sync(self) -> GetNextDropCell.Response:
         req = GetNextDropCell.Request()
+        req.index = self._drop_cnt
 
         try:
             result: GetNextDropCell.Response = self._client.call(req)
@@ -268,6 +326,8 @@ class DropGridSyncClient:
                 )
             else:
                 self._node.get_logger().warn("빈 그리드가 없습니다 (모든 셀이 채워짐).")
+
+            self._drop_cnt += 1
 
             return result
 
@@ -321,13 +381,15 @@ class MainControlNode(Node):
         self._is_finished = False
         self._state = self.State.SEARCH
 
+        self._image_saver = ImageSaver(node=self)
+
         # UR5eController 인스턴스
         self._ur5e_controller = UR5eController(node=self)
 
         self._fake_action_creator = FakeActionCreator(
             file_path="/home/irol/DRL-Occluded-Object-Search/src/robot_control/resource/fake_action.json"
         )
-        self._use_fake_action = True  # True로 설정하면 DRLClient 대신 FakeActionCreator에서 액션을 가져와서 실행 (테스트 용도)
+        self._use_fake_action = False  # True로 설정하면 DRLClient 대신 FakeActionCreator에서 액션을 가져와서 실행 (테스트 용도)
 
         # RobotiqController 인스턴스 (현재는 None으로 전달, 실제 구현 필요)
         self._robotiq_controller = RobotiqController(
@@ -386,6 +448,7 @@ class MainControlNode(Node):
             self.State.FINISHED: self._finished,
         }
 
+        self._exp_index: int = 0
         self._action_type: int = None
         self._target_column: int = None
         self._drop_cell: Point = None
@@ -410,6 +473,8 @@ class MainControlNode(Node):
         # FOR TEST
         # self._action_type = 1
         # self._target_column = 3
+
+        self._image_saver.log()
 
         if self._use_fake_action:
             f_action, f_column = self._fake_action_creator.get_action()
@@ -528,6 +593,28 @@ class MainControlNode(Node):
 def main(args=None):
     rclpy.init(args=args)
 
+    """
+    {
+        "can_1": "coca_cola", # 0
+        "can_2": "sikhye", # 1
+        "can_3": "yello_peach", # 2
+        "can_4": "cantata", # 3
+        "cup_1": "cup_sky", # 4
+        "cup_2": "cup_white", # 5
+        "cup_3": "cup_blue", # 6
+        "cup_4": "cup_green", # 7
+        "mug_1": "mug_black", # 8
+        "mug_2": "mug_gray", # 9
+        "mug_3": "mug_yello", # 10
+        "mug_4": "mug_orange", # 11
+        "bottle_1": "alive", # 12
+        "bottle_2": "green_tea", # 13
+        "bottle_3": "yello_smoothie", # 14 
+        "bottle_4": "bottle_red",# 15
+        "can_5": "cyder", # 16
+    }
+    """
+
     node = MainControlNode(target_class_idx=15)
 
     th = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
@@ -541,19 +628,19 @@ def main(args=None):
         # 초기화 대기 시간 동안 노드가 정상적으로 실행되고 있는지 확인하기 위해 로그 출력
         r.sleep()
 
-    # try:
-    while rclpy.ok():
+    try:
+        while rclpy.ok():
 
-        node.step()
-        r.sleep()
-    # except KeyboardInterrupt:
-    #     node.get_logger().info("KeyboardInterrupt received, shutting down.")
-    # except Exception as e:
-    #     node.get_logger().error(f"Exception in main loop: {e}")
-    # finally:
-    th.join(timeout=1.0)
-    node.destroy_node()
-    rclpy.shutdown()
+            node.step()
+            r.sleep()
+    except KeyboardInterrupt:
+        node.get_logger().info("KeyboardInterrupt received, shutting down.")
+    except Exception as e:
+        node.get_logger().error(f"Exception in main loop: {e}")
+    finally:
+        th.join(timeout=1.0)
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == "__main__":

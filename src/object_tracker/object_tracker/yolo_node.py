@@ -209,16 +209,10 @@ class RealTimeSegmentationNode(Node):
             desired_data = self._obj_bounds.get(clean_cls)
             difference_ratio = 1.0  # 기본값 (json에 데이터가 없을 경우 등)
 
-            # if desired_data:
-            #     numerator = (float(desired_data["x"]) + float(desired_data["z"])) / 2.0
-            #     denominator = float(desired_data["y"])
-            #     desired_ratio = numerator / denominator
-
-            #     difference_ratio = (
-            #         detected_ratio / desired_ratio
-            #         if detected_ratio > desired_ratio
-            #         else desired_ratio / detected_ratio
-            #     )
+            # y영역 필터링
+            y_center = (y1 + y2) / 2.0
+            if y_center < orig_h * 0.2:  # 예시: 이미지 하단 20% 영역만 허용
+                continue
 
             # 4. BoundingBox 메시지 생성 (깔끔해진 이름 사용)
             mask_flat = []

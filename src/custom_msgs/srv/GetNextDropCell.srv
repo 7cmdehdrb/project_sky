@@ -1,4 +1,5 @@
 # Request (Empty)
+int32 index
 ---
 # Response
 bool success

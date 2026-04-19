@@ -28,14 +28,16 @@ class PolicyServiceNode(Node):
                 (
                     "weight_fcn",
                     [1.0, 1.0, 1.0, 1.0, 1.0],
-                )
+                ),
             ],
         )
 
         self.cb_group = ReentrantCallbackGroup()
 
         # 모델 경로 수정 필요
-        self._weight_fcn = list(self.get_parameter("weight_fcn").get_parameter_value().double_array_value)
+        self._weight_fcn = list(
+            self.get_parameter("weight_fcn").get_parameter_value().double_array_value
+        )
         model_path = self.get_parameter("model_path").get_parameter_value().string_value
         self.policy_manager = RLPolicyManager(model_path)
 
@@ -88,6 +90,11 @@ class PolicyServiceNode(Node):
     async def handle_get_policy_action(
         self, request: GetPolicyAction.Request, response: GetPolicyAction.Response
     ):
+        exp_index: int = request.index
+        if exp_index == 0:
+            self.get_logger().info(f"▶️ Episode {exp_index} 시작 - 상태 초기화")
+            self.policy_manager.reset_states()  # Episode 시작 시 상태 초기화
+
         target_id = request.target_id
         self.get_logger().info(
             f"[A] Main으로부터 추론 요청 수신 (Target ID: {target_id})"

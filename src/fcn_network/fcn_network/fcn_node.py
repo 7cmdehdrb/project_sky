@@ -202,6 +202,10 @@ class FCNServiceNode(Node):
         # 2. 모델 예측 수행 (2D 결과 맵)
         result_2d = self.fcn_manager.predict(target_image)
 
+        # Force the top region (0~80 pixels in height) to black
+        # self.get_logger().info(f"Result 2D Shape: {result_2d.shape}")
+        # result_2d[:80, :] = 0
+
         # 3. 후처리 및 1D PDM, 가중치 적용 데이터 획득
         weights = request.weight  # 요청에서 가중치 배열과 타겟 클래스 인덱스 받기
         target_class_idx = request.target_class_idx

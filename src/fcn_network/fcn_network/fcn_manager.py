@@ -165,6 +165,10 @@ class FCNManager:
 
         target_map = result[target_class_idx]
 
+        # target_map[:40, :] = (
+        #     0.0  # 상단 80픽셀 영역을 강제로 0으로 설정 (긴빠이 로직과의 시너지 기대)
+        # )
+
         # 확신도가 높은 값에 가중치를 부여하는 지수 함수 적용
         normalized_result = target_map * np.exp(-self._gain * (1 - target_map))
 

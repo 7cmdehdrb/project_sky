@@ -4,7 +4,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_system_default
 
 from enum import Enum
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 import numpy as np
 
 # ROS2 Messages
@@ -53,6 +53,15 @@ class DropGridManager(GridManager):
         self._current_drop_index = 0
 
         self._generate_drop_sequence()
+
+    def reset(self):
+        self._current_drop_index = 0
+
+        self._cells: Dict[Tuple[str, int], GridCell]
+        for cell in self._cells.values():
+            cell._is_occupied = (
+                False  # 부모 클래스의 _is_occupied 필드를 False로 초기화
+            )
 
     def set_drop_rule(
         self, priority: DropPriority, row_dir: DropDirection, col_dir: DropDirection

@@ -131,14 +131,14 @@ class IntegrationImageNode(Node):
             [
                 np_raw_image,
                 np_segmentation_image,
-                np_closest_image,
+                np_2d_fcn_processed_image,
             ]
         )
 
         bottom_integrated_image = np.hstack(
             [
+                np_closest_image,
                 np_1d_fcn_processed_image,
-                np_2d_fcn_processed_image,
                 np_top_view_image,
             ]
         )

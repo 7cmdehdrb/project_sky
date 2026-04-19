@@ -26,8 +26,8 @@ def generate_launch_description():
         parameters=[
             {
                 # "model_file": f"{root_dir}/src/object_tracker/resource/instance_segmentation_34_2026-03-31_19-50-29/experiment_x_model/weights/best.pt", # best_hg.pt
-                # "model_file": f"{root_dir}/src/object_tracker/resource/best_hg.pt",
-                "model_file": f"{root_dir}/src/object_tracker/resource/instance_segmentation_45_aug_strong_2026-04-17_16-08-56/weights/best.pt",
+                "model_file": f"{root_dir}/src/object_tracker/resource/best_yolo45_new.pt",
+                # "model_file": f"{root_dir}/src/object_tracker/resource/instance_segmentation_45_aug_strong_2026-04-17_16-08-56/weights/best.pt",
                 "obj_bounds_file": f"{root_dir}/src/object_tracker/resource/obj_bounds.json",
                 "conf_threshold": 0.7,
             }

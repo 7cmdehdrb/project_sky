@@ -62,6 +62,11 @@ class DropGridNode(Node):
     ):
         """서비스 요청이 들어오면 다음 셀을 획득하고 Drop 처리 후 응답합니다."""
 
+        exp_index: int = request.index
+
+        if exp_index == 0:
+            self.drop_grid_manager.reset()  # 실험이 새로 시작될 때마다 그리드 상태 초기화
+
         self.get_logger().info("서비스 요청이 들어왔습니다. 다음 셀을 계산합니다...")
 
         # 1. 다음에 넣어야 하는 셀 획득
